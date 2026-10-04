@@ -28,6 +28,7 @@ struct Voice {
     uint16_t tag = 1, channels = 1, bits = 16, align = 2;
     uint32_t rate = 48000;
     // buffer
+    // play region in bytes from data, loop region in bytes from the play region
     uint32_t data = 0, bytes = 0, loop_start = 0, loop_len = 0, play_start = 0, play_len = 0;
     bool playing = false, looping = false, paused = false;
     bool sync = false;  // held until IDirectSound_SynchPlayback

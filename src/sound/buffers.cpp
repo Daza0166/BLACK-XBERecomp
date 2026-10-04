@@ -17,7 +17,7 @@ static uint32_t NewBuffer(uint32_t desc, uint32_t out) {
     v.is3d = flags & 0x10;
     if (bytes) {
         v.data = mem::AllocContiguous(bytes, 0, 0xFFFFFFFF, 4);
-        v.bytes = bytes;
+        v.bytes = v.play_len = v.loop_len = bytes;
     }
     W32(out, obj);
     return 0;
@@ -44,8 +44,10 @@ BUFFER(Release, 1) {
 }
 BUFFER(Unlock, 5) { return 0; }
 BUFFER(SetBufferData, 3) {
+    if (a[1] == v.data && a[2] == v.bytes) return 0;
     v.data = a[1];
-    v.bytes = a[2];
+    v.bytes = v.play_len = v.loop_len = a[2];
+    v.play_start = v.loop_start = 0;
     v.pos = 0;
     v.block = -1;
     return 0;
@@ -53,7 +55,7 @@ BUFFER(SetBufferData, 3) {
 BUFFER(Play, 4) {
     v.playing = true;
     v.looping = a[3] & 1;
-    if (a[3] & 2) v.pos = FramesOf(v, v.play_start);
+    if (a[3] & 2) v.pos = 0;
     v.sync = a[3] & 4;
     return 0;
 }
@@ -66,15 +68,20 @@ BUFFER(StopEx, 4) {
     v.playing = false;
     return 0;
 }
-// (this, start, length) in bytes, 0 length plays to the end
+// (this, start, length) in bytes, 0 length plays to the end. The loop becomes the whole region.
 BUFFER(SetPlayRegion, 3) {
+    if (a[1] > v.bytes || a[2] > v.bytes - a[1]) return 0x88780032u;
     v.play_start = a[1];
-    v.play_len = a[2];
+    v.play_len = v.loop_len = a[2] ? a[2] : v.bytes - a[1];
+    v.loop_start = 0;
+    v.pos = 0;
+    v.block = -1;
     return 0;
 }
 BUFFER(SetLoopRegion, 3) {
+    if (a[1] > v.play_len || a[2] > v.play_len - a[1]) return 0x88780032u;
     v.loop_start = a[1];
-    v.loop_len = a[2];
+    v.loop_len = a[2] ? a[2] : v.play_len - a[1];
     return 0;
 }
 BUFFER(GetStatus, 2) {
@@ -84,7 +91,7 @@ BUFFER(GetStatus, 2) {
 BUFFER(GetCurrentPosition, 3) {
     uint32_t p = BytesOf(v, uint32_t(v.pos));
     if (a[1]) W32(a[1], p);
-    if (a[2]) W32(a[2], v.bytes ? (p + BytesOf(v, 65 * 4)) % v.bytes : 0);
+    if (a[2]) W32(a[2], v.play_len ? (p + BytesOf(v, 65 * 4)) % v.play_len : 0);
     return 0;
 }
 BUFFER(SetCurrentPosition, 2) {

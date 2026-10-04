@@ -87,6 +87,7 @@ void Render(float* out, uint32_t frames) {
         if (v.paused || v.sync || (!v.stream && !v.playing)) continue;
         float l, r;
         Levels(v, l, r);
+        uint32_t base = v.data + v.play_start;
         double step = double(v.freq ? v.freq : v.rate) / audio::kRate;
         for (uint32_t i = 0; i < frames; i++) {
             uint32_t f = uint32_t(v.pos);
@@ -118,24 +119,23 @@ void Render(float* out, uint32_t frames) {
                     b1 = b;
                 }
             } else {
-                uint32_t end = v.looping && v.loop_len ? FramesOf(v, v.loop_start + v.loop_len)
-                               : FramesOf(v, v.play_len ? std::min(v.play_start + v.play_len, v.bytes) : v.bytes);
+                uint32_t start = v.looping ? FramesOf(v, v.loop_start) : 0;
+                uint32_t end = FramesOf(v, v.looping ? v.loop_start + v.loop_len : v.play_len);
                 if (f >= end) {
-                    if (!v.looping || !end) {
+                    if (!v.looping || end <= start) {
                         v.playing = false;
                         v.pos = 0;
                         break;
                     }
-                    uint32_t start = v.loop_len ? FramesOf(v, v.loop_start) : 0;
-                    v.pos -= end - start;
+                    v.pos = start + std::fmod(v.pos - start, double(end - start));
                     f = uint32_t(v.pos);
                 }
                 if (!v.data) break;
-                a = Sample(v, v.data, f, 0);
-                b = Sample(v, v.data, f, 1);
-                uint32_t g = f + 1 < end ? f + 1 : v.looping && end ? (v.loop_len ? FramesOf(v, v.loop_start) : 0) : f;
-                a1 = Sample(v, v.data, g, 0);
-                b1 = Sample(v, v.data, g, 1);
+                a = Sample(v, base, f, 0);
+                b = Sample(v, base, f, 1);
+                uint32_t next = f + 1 < end ? f + 1 : v.looping ? start : f;
+                a1 = Sample(v, base, next, 0);
+                b1 = Sample(v, base, next, 1);
             }
             float t = float(v.pos - f);
             out[i * 2] += (a + (a1 - a) * t) * l;
