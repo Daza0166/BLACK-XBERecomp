@@ -250,7 +250,7 @@ void Keyboard(Pad& p) {
         else if (b < 8) p.analog[b] = 0xFF;
         else p.buttons |= uint16_t(1u << (b - 8));
     }
-    if (Down(VK_RETURN)) p.analog[0] = 0xFF;
+    if (Down(VK_RETURN) || (!play && Down(VK_SPACE))) p.analog[0] = 0xFF;
     if (Down(VK_BACK)) p.analog[1] = 0xFF;
     if (!play)
         for (int i = 0; i < 4; i++) p.buttons |= uint16_t(Down(kFixed[i]) << i);
