@@ -38,7 +38,9 @@ struct Voice {
     uint32_t max_packets = 1, callback = 0, context = 0;
     std::deque<Packet> packets;
     // levels
-    float volume = 1, headroom = 1, gain_l = 1, gain_r = 1;
+    float volume = 1, headroom = 1;
+    uint8_t nbins = 0, bin[8] = {};
+    int32_t bin_mb[32] = {};  // by mix bin
     bool is3d = false;
     uint32_t mode = 0;  // DS3DMODE: 1 head relative, 2 disabled
     float p[3] = {}, min_dist = 1, max_dist = 1e9f;
@@ -89,7 +91,8 @@ void Complete(Voice& v, Packet& pk, uint32_t status);
 void Run(X86Context& ctx, const std::vector<Done>& done);
 int64_t NowMs();
 void ReadFormat(Voice& v, uint32_t wfx);
-void MixBins(Voice& v, uint32_t mixbins);
+void SetBins(Voice& v, uint32_t mixbins);
+void SetBinVolumes(Voice& v, uint32_t mixbins);
 float DefaultHeadroom(uint32_t flags);
 
 }  // namespace sound

@@ -77,7 +77,7 @@ HLE_STDCALL(IDirectSound_Release, 1) { return 0; }
 HLE_STDCALL(DirectSoundUseFullHRTF, 0) { return 0; }
 HLE_STDCALL(DirectSoundUseLightHRTF, 0) { return 0; }
 HLE_STDCALL(IDirectSound_GetSpeakerConfig, 2) {
-    W32(a[1], 2);  // stereo
+    W32(a[1], 0);  // DSSPEAKER_STEREO
     return 0;
 }
 HLE_STDCALL(IDirectSound_SetEffectData, 6) { return 0; }

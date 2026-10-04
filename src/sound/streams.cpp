@@ -28,7 +28,7 @@ HLE_STDCALL(DirectSoundCreateStream, 2) {
     ReadFormat(v, R32(desc + 8));
     v.callback = R32(desc + 12);
     v.context = R32(desc + 16);
-    MixBins(v, R32(desc + 20));
+    SetBins(v, R32(desc + 20));
     v.is3d = flags & 0x10;
     v.headroom = DefaultHeadroom(flags);
     W32(a[1], obj);
@@ -130,11 +130,11 @@ STREAM(SetHeadroom, 2) {
     return 0;
 }
 STREAM(SetMixBinVolumes, 2) {
-    MixBins(v, a[1]);
+    SetBinVolumes(v, a[1]);
     return 0;
 }
 STREAM(SetMixBins, 2) {
-    MixBins(v, a[1]);
+    SetBins(v, a[1]);
     return 0;
 }
 STREAM(SetMaxDistance, 3) {

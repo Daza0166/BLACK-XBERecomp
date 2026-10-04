@@ -13,7 +13,7 @@ static uint32_t NewBuffer(uint32_t desc, uint32_t out) {
     v.obj = obj;
     uint32_t flags = R32(desc + 4), bytes = R32(desc + 8);
     ReadFormat(v, R32(desc + 12));
-    MixBins(v, R32(desc + 16));
+    SetBins(v, R32(desc + 16));
     v.is3d = flags & 0x10;
     v.headroom = DefaultHeadroom(flags);
     if (bytes) {
@@ -125,11 +125,11 @@ BUFFER(SetHeadroom, 2) {
     return 0;
 }
 BUFFER(SetMixBinVolumes, 2) {
-    MixBins(v, a[1]);
+    SetBinVolumes(v, a[1]);
     return 0;
 }
 BUFFER(SetMixBins, 2) {
-    MixBins(v, a[1]);
+    SetBins(v, a[1]);
     return 0;
 }
 BUFFER(SetMaxDistance, 3) {
