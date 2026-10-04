@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -17,5 +18,6 @@ struct Options {
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
+inline std::atomic<float> g_fps{0};  // from the host, for the game's own counter
 
 }  // namespace game

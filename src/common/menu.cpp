@@ -406,16 +406,6 @@ void DrawPanel() {
     ImGui::PopStyleColor(6);
 }
 
-void DrawFps(double fps) {
-    char text[32];
-    std::snprintf(text, sizeof(text), "FPS: %.1f", fps);
-    float em = ImGui::GetFontSize();
-    ImDrawList* list = ImGui::GetForegroundDrawList();
-    ImVec2 at(em * 0.8f, em * 0.5f);
-    list->AddText(ImVec2(at.x + 1, at.y + 1), IM_COL32(0, 0, 0, 200), text);
-    list->AddText(at, IM_COL32(180, 255, 120, 255), text);
-}
-
 }  // namespace
 
 bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }
@@ -430,12 +420,12 @@ void ToggleMenu() {
 }
 
 void DrawUi(double fps) {
+    game::g_fps = float(fps);
     ImGuiIO& io = ImGui::GetIO();
     if (MenuOpen()) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     // scale the font with the output height
     io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 720.0f);
-    if (game::Opt().fps_counter) DrawFps(fps);
     if (MenuOpen()) {
         PollCapture();
         DrawPanel();
