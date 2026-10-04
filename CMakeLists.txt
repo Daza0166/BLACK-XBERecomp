@@ -18,6 +18,8 @@ else()
     set(SDK ${xbe_sdk_SOURCE_DIR})
 endif()
 include(${SDK}/cmake/XbeRecomp.cmake)
+# src/sound replaces the SDK one
+list(FILTER XBE_RUNTIME_SOURCES EXCLUDE REGEX "/xdk/dsound\\.cpp$")
 
 file(GLOB XBE_HOST_SOURCES CONFIGURE_DEPENDS src/*/*.cpp)
 list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/game/")
