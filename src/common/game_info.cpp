@@ -45,7 +45,7 @@ bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
             break;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT) {
-                SetCursor(MenuOpen() ? LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)) : nullptr);
+                SetCursor(MenuOpen() || input::CursorShown() ? LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)) : nullptr);
                 *result = TRUE;
                 return true;
             }
@@ -56,6 +56,7 @@ bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
 
 // port 0 has the keyboard; the game sees no input while the panel is open
 void Pad(int port, input::Pad& pad) {
+    input::SeenPad(pad);
     if (port == 0) pad.connected = true;
     if (app::MenuOpen()) pad = input::Pad{.connected = pad.connected};
     else if (port == 0) input::Keyboard(pad);

@@ -32,6 +32,8 @@ std::atomic<uint64_t> g_capture_ms{0};  // PressedKey
 std::atomic<bool> g_settle{false};
 std::atomic<uint16_t> g_tap{0};
 std::atomic<uint64_t> g_tap_until{0};
+std::atomic<bool> g_menu{false}, g_keyboard{true};
+std::atomic<int> g_wheel{0};
 constexpr uint64_t kPlayMs = 250, kTapMs = 80;
 
 uint64_t NowMs() {
@@ -160,6 +162,15 @@ void Clip() {
     if (!GetClipCursor(&cur) || !EqualRect(&r, &cur)) ClipCursor(&r);
 }
 
+// Windows asks for the cursor only when the mouse moves
+void RefreshCursor() {
+    if (g_hwnd) PostMessageW(g_hwnd, WM_SETCURSOR, WPARAM(g_hwnd), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+}
+
+void SetKeyboard(bool on) {
+    if (g_keyboard.exchange(on) != on) RefreshCursor();
+}
+
 }  // namespace
 
 void StartMouse(void* hwnd) {
@@ -174,13 +185,15 @@ void OnRawInput(void* handle) {
     if (GetRawInputData(static_cast<HRAWINPUT>(handle), RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER)) == UINT(-1) ||
         ri.header.dwType != RIM_TYPEMOUSE || !Active())
         return;
+    const RAWMOUSE& m = ri.data.mouse;
+    SetKeyboard(true);
     // the cursor is free in the game's menus
     if (!Play()) {
         ClipCursor(nullptr);
+        if (m.usButtonFlags & RI_MOUSE_WHEEL) g_wheel += SHORT(m.usButtonData) > 0 ? 1 : -1;
         return;
     }
     Clip();
-    const RAWMOUSE& m = ri.data.mouse;
     if (!(m.usFlags & MOUSE_MOVE_ABSOLUTE)) {
         g_dx += m.lLastX;
         g_dy += m.lLastY;
@@ -225,11 +238,12 @@ void Keyboard(Pad& p) {
             if (Down(vk)) return;
         g_settle = false;
     }
-    bool play = Play(), walk = false;
+    bool play = Play(), walk = false, used = std::any_of(std::begin(kFixed), std::end(kFixed), Down);
     int stick[8] = {};  // move forward back left right, look up down left right
     for (size_t i = 0; i < kCount; i++) {
         int b = kActions[i].button;
         if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), Down)) continue;
+        used = true;
         if (b == kWalk) walk = true;
         else if (b >= 20 && !play) continue;
         else if (b >= 16) stick[b - 16] = 1;
@@ -246,7 +260,38 @@ void Keyboard(Pad& p) {
     if (int x = stick[7] - stick[6]) p.rx = int16_t(x * 32767);
     if (int y = stick[4] - stick[5]) p.ry = int16_t(y * 32767);
     if (NowMs() < g_tap_until) p.buttons |= g_tap;
+    if (used) SetKeyboard(true);
 }
+
+void SeenPad(const Pad& p) {
+    auto pushed = [](int16_t v) { return v > 16000 || v < -16000; };
+    if (p.buttons || std::any_of(std::begin(p.analog), std::end(p.analog), [](uint8_t a) { return a > 0x20; }) ||
+        pushed(p.lx) || pushed(p.ly) || pushed(p.rx) || pushed(p.ry))
+        SetKeyboard(false);
+}
+
+void SetMenu(bool menu) {
+    if (g_menu.exchange(menu) != menu) RefreshCursor();
+}
+
+bool CursorShown() { return g_menu && g_keyboard; }
+
+bool Cursor(float& x, float& y, bool& down) {
+    POINT p;
+    RECT r;
+    if (!Active() || !CursorShown() || !GetCursorPos(&p) || !ScreenToClient(g_hwnd, &p) || !GetClientRect(g_hwnd, &r) ||
+        r.right <= 0 || r.bottom <= 0)
+        return false;
+    // the frame is shown 16:9, or 4:3 on a 4:3 output, in the middle of the window
+    float aspect = app::Widescreen() ? 16.0f / 9.0f : 4.0f / 3.0f, w = float(r.right), h = float(r.bottom);
+    float vw = std::min(w, h * aspect), vh = vw / aspect;
+    x = (float(p.x) - (w - vw) / 2) / vw;
+    y = (float(p.y) - (h - vh) / 2) / vh;
+    down = Down(VK_LBUTTON);
+    return true;
+}
+
+int TakeWheel() { return g_wheel.exchange(0); }
 
 const Action* Actions(size_t* count) {
     static const auto list = [] {

@@ -28,4 +28,12 @@ void LoadBindings();     // after the settings load
 int PressedKey();        // a bindable key or mouse button held now, 0 for none
 bool PanelKey(int vk);   // the settings panel is bound to this key and no key capture wants it
 
+// the game's own menus
+void SeenPad(const Pad& pad);  // a controller's report before the keys join it: its input hides the cursor
+void SetMenu(bool menu);       // game thread, each tick: a menu page is up
+bool CursorShown();            // in a menu with the keyboard or mouse used last
+// the cursor in the shown frame, 0 to 1 across and down, and the left button; false while it is not shown
+bool Cursor(float& x, float& y, bool& down);
+int TakeWheel();               // wheel notches in the menus since the last call, up positive
+
 }  // namespace input
