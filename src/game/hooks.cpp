@@ -13,6 +13,10 @@
 
 using namespace kernel;
 
+namespace d3d {
+void ViewScale(float xy);
+}
+
 namespace {
 
 constexpr uint32_t kDevice = SYM(D3D_Device);
@@ -143,6 +147,8 @@ constexpr float kHalf = 3.14159265f / 360.0f;
 // tangent of a setting's half angle over that of the game's 70 degrees
 static float Widen(uint32_t degrees) { return std::tan(std::clamp(degrees, 45u, 140u) * kHalf) / std::tan(70 * kHalf); }
 
+static float g_gun = 1.0f;  // the gun's picture over the view's
+
 // The view of play, 70 over the zoom: the setting from the hip, the game's own once the aim is in.
 // ecx the weapon, xmm0 its zoom. Scripted cameras write theirs after this
 void FieldOfView(X86Context& ctx, uint8_t*) {
@@ -150,8 +156,64 @@ void FieldOfView(X86Context& ctx, uint8_t*) {
     float aim = data ? G<float>(data + 0xB4) : 1, zoom = ctx.xmm[0].f[0];
     float hip = aim > 1 ? std::clamp((aim - zoom) / (aim - 1), 0.0f, 1.0f) : 1.0f;
     float view = 1 + (Widen(game::Opt().fov) - 1) * hip;
+    g_gun = view / (1 + (Widen(game::Opt().viewmodel_fov) - 1) * hip);
     float& fov = ctx.xmm[1].f[0];
     if (view != 1) fov = std::atan(std::tan(fov * kHalf) * view) / kHalf;
+}
+
+// The list of the first person models, gun, arms and muzzle mesh: drawn at the viewmodel setting
+X86_EXTERN_FUNC(__imp__sub_00176F60);
+X86_FUNC(sub_00176F60) {
+    bool gun = g_gun != 1 && ctx.esi == R32(0x2D67F4) + 0xCAE4;
+    if (gun) d3d::ViewScale(g_gun);
+    __imp__sub_00176F60(ctx, base);
+    if (gun) d3d::ViewScale(1);
+}
+
+static uint32_t Player() { return R32(0x2D45D4) + 0x30; }
+
+// What sits on the gun follows its picture: across the player's view (+0xF0 forward, +0x100 eye) a point or
+// an axis grows by the same share, its depth stays
+static void OnGun(uint32_t at, bool point) {
+    float* v = &G<float>(at);
+    const float* forward = &G<float>(Player() + 0xF0);
+    const float* eye = &G<float>(Player() + 0x100);
+    float d[3], depth = 0;
+    for (int i = 0; i < 3; i++) depth += (d[i] = v[i] - (point ? eye[i] : 0)) * forward[i];
+    for (int i = 0; i < 3; i++) v[i] += (g_gun - 1) * (d[i] - forward[i] * depth);
+}
+
+// A locator's matrix moved onto the gun's picture, as a copy: the game's own stays where bullets start
+static uint32_t Follow(uint32_t matrix, uint32_t owner, bool axes) {
+    if (g_gun == 1 || matrix == 0x5655C0 || owner != Player()) return matrix;
+    static uint32_t copy = mem::AllocSystem(64, 16);
+    std::memcpy(HostPtr(copy), HostPtr(matrix), 64);
+    for (uint32_t row = axes ? 0 : 48; row < 64; row += 16) OnGun(copy + row, row == 48);
+    return copy;
+}
+
+// the muzzle flash sprite, drawn with the matrix
+void FlashSprite(X86Context& ctx, uint8_t*) { ctx.eax = Follow(ctx.eax, Player(), true); }
+// effects that follow a locator of their owner (edi)
+void GunEffect(X86Context& ctx, uint8_t*) { ctx.eax = Follow(ctx.eax, ctx.edi, false); }
+// effects that start at one
+void GunEffectStart(X86Context& ctx, uint8_t*) { ctx.edx = Follow(ctx.edx, R32(ctx.ebx + 0x44), false); }
+
+// esi a bullet that missed, eax where its tracer starts
+void TracerStart(X86Context& ctx, uint8_t*) {
+    uint32_t shot = R32(ctx.esi + 0x70), weapon = shot ? R32(shot + 4) : 0;
+    if (g_gun == 1 || !weapon || R32(weapon + 0xF0) != Player()) return;
+    static uint32_t copy = mem::AllocSystem(16, 16);
+    std::memcpy(HostPtr(copy), HostPtr(ctx.eax), 16);
+    OnGun(ctx.eax = copy, true);
+}
+
+// The player's muzzle matrix: moved for the two tracers that start from it
+X86_EXTERN_FUNC(__imp__sub_001D2860);
+X86_FUNC(sub_001D2860) {
+    uint32_t from = R32(ctx.esp), out = R32(ctx.esp + 4);
+    __imp__sub_001D2860(ctx, base);
+    if (g_gun != 1 && (from == 0x1DBAAB || from == 0x1DC4D4)) OnGun(out + 48, true);
 }
 
 // recoil dies away by a factor a frame

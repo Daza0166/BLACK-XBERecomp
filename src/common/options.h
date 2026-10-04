@@ -14,6 +14,7 @@ struct Options {
     float mouse_sensitivity = 1.0f;
     bool invert_mouse = false;
     uint32_t fov = 70;  // horizontal degrees on a 4:3 frame, 70 is the game's
+    uint32_t viewmodel_fov = 70;  // the gun and arms, the same measure
     uint32_t walk_speed = 50;  // percent of running, while the walk key is held
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };

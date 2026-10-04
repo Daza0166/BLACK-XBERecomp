@@ -163,12 +163,14 @@ float ZScale(const gpu::Surface& zs) {
     return f == 0x2C || f == 0x30 ? 65535.0f : 16777215.0f;
 }
 
+float g_view_scale = 1.0f;
+
 // c-38 and c-37 hold the viewport scale and offset, as D3D_GetViewportOffsetAndScale computes them
 void UpdateViewportConstants() {
     auto& v = g_state.viewport;
     g_state.zscale = ZScale(g_state.zs);
     float hw = v.w * 0.5f, hh = v.h * 0.5f;
-    g_state.vsc[58] = {hw, -hh, (v.max_z - v.min_z) * g_state.zscale, 0};
+    g_state.vsc[58] = {hw * g_view_scale, -hh * g_view_scale, (v.max_z - v.min_z) * g_state.zscale, 0};
     g_state.vsc[59] = {v.x + g_state.ss_offset_x + hw, v.y + g_state.ss_offset_y + hh, v.min_z * g_state.zscale, 0};
 }
 
@@ -191,6 +193,13 @@ void ApplyDefaultStates(X86Context& ctx) {
 
 gpu::State& State() { return g_state; }
 std::recursive_mutex& Lock() { return g_lock; }
+
+// draws grow about the viewport's centre, depth stays
+void ViewScale(float xy) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_view_scale = xy;
+    UpdateViewportConstants();
+}
 
 }  // namespace d3d
 
