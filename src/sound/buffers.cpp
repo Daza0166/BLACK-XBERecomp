@@ -91,7 +91,7 @@ BUFFER(GetStatus, 2) {
 BUFFER(GetCurrentPosition, 3) {
     uint32_t p = BytesOf(v, uint32_t(v.pos));
     if (a[1]) W32(a[1], p);
-    if (a[2]) W32(a[2], v.play_len ? (p + BytesOf(v, 65 * 4)) % v.play_len : 0);
+    if (a[2]) W32(a[2], v.play_len ? (p + BytesOf(v, 64 * 4)) % v.play_len : 0);
     return 0;
 }
 BUFFER(SetCurrentPosition, 2) {

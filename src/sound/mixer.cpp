@@ -14,7 +14,7 @@ const int kStep[89] = {7,     8,     9,     10,    11,    12,    13,    14,    1
                        2272,  2499,  2749,  3024,  3327,  3660,  4026,  4428,  4871,  5358,  5894,  6484,  7132,  7845,  8630,
                        9493,  10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767};
 
-// one 36 byte per channel IMA block, 65 frames
+// one 36 byte per channel IMA block, the voice plays 64 of its 65 frames
 void DecodeBlock(const uint8_t* b, int ch, int16_t* out) {
     for (int c = 0; c < ch; c++) {
         int pred = int16_t(b[c * 4] | b[c * 4 + 1] << 8), idx = std::min<int>(b[c * 4 + 2], 88);
@@ -39,12 +39,12 @@ float Sample(Voice& v, uint32_t data, uint32_t f, int c) {
     c = std::min<int>(c, v.channels - 1);
     const uint8_t* p = static_cast<const uint8_t*>(HostPtr(data));
     if (v.tag == 0x69) {
-        int64_t at = int64_t(data) + int64_t(f / 65) * 36 * v.channels;
+        int64_t at = int64_t(data) + int64_t(f / 64) * 36 * v.channels;
         if (at != v.block) {
             DecodeBlock(static_cast<const uint8_t*>(HostPtr(uint32_t(at))), std::min<int>(v.channels, 8), v.decoded);
             v.block = at;
         }
-        return v.decoded[(f % 65) * v.channels + c] / 32768.0f;
+        return v.decoded[(f % 64) * v.channels + c] / 32768.0f;
     }
     if (v.bits == 8) return (p[f * v.align + c] - 128) / 128.0f;
     int16_t s;

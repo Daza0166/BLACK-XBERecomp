@@ -65,11 +65,11 @@ inline uint32_t g_ds = 0;
 inline float Db(int32_t hundredths) { return hundredths <= -10000 ? 0.0f : std::pow(10.0f, hundredths / 2000.0f); }
 
 inline uint32_t FramesOf(const Voice& v, uint32_t bytes) {
-    if (v.tag == 0x69) return bytes / (36u * v.channels) * 65;
+    if (v.tag == 0x69) return bytes / (36u * v.channels) * 64;
     return bytes / std::max<uint32_t>(v.align, 1);
 }
 inline uint32_t BytesOf(const Voice& v, uint32_t frames) {
-    if (v.tag == 0x69) return frames / 65 * 36 * v.channels;
+    if (v.tag == 0x69) return frames / 64 * 36 * v.channels;
     return frames * v.align;
 }
 
