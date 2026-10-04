@@ -1,6 +1,7 @@
 // Hooks for default.xbe
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <thread>
 
 #include "app/app.h"
@@ -123,6 +124,38 @@ void MenuTick(X86Context& ctx, uint8_t*) {
     last = now;
     ctx.eax = uint32_t(carry);
     carry -= float(ctx.eax);
+}
+
+// what a step made once a frame at 30 becomes over the real frame: factor to the power of this
+static float FrameShare() { return FrameTime() / G<float>(0x2F3A38); }
+
+// The zoom of the aim grows or shrinks by a fixed share a frame
+void ZoomStep(X86Context& ctx, uint8_t*) {
+    float old = G<float>(R32(ctx.ecx + 0xF0) + 0x2A4), now = ctx.xmm[0].f[0];
+    if (now == old || old <= 0) return;
+    bool out = !G<uint8_t>(ctx.ecx + 0x105) && old > 1;  // back towards 1
+    ctx.xmm[0].f[0] = out ? 1 + (old - 1) * std::pow((now - 1) / (old - 1), FrameShare())
+                          : old * std::pow(now / old, FrameShare());
+}
+
+// recoil dies away by a factor a frame
+void RecoilDecay(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] = std::pow(ctx.xmm[0].f[0], FrameShare()); }
+
+// The gun trails the stick by two shares a frame, read from the weapon's data: scaled for the four blends
+static uint32_t g_sway;
+static float g_sway_share[2];
+void SwayBegin(X86Context& ctx, uint8_t*) {
+    g_sway = ctx.eax + 0x104;
+    for (int i = 0; i < 2; i++) {
+        float& k = G<float>(g_sway + i * 4);
+        g_sway_share[i] = k;
+        k = 1 - std::pow(1 - k, FrameShare());
+    }
+}
+void SwayEnd(X86Context&, uint8_t*) {
+    if (!g_sway) return;
+    for (int i = 0; i < 2; i++) G<float>(g_sway + i * 4) = g_sway_share[i];
+    g_sway = 0;
 }
 
 // A or Start on any pad, on the press
