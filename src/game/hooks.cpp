@@ -4,6 +4,7 @@
 
 #include "app/app.h"
 #include "common/options.h"
+#include "core/input.h"
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
@@ -83,9 +84,29 @@ void AfterCreateDevice(X86Context& ctx, uint8_t* base) {
     started = true;
 }
 
-// the frontend's film player: the logos (1) and the film after pressing start (4) end as they begin
-void SkipVideo(X86Context& ctx, uint8_t*) {
-    if (!game::Opt().skip_intros) return;
-    uint32_t film = R32(ctx.ebp + 0x20C), player = ctx.ebp + 0x4C, state = R32(player + 0x1A8);
-    if ((film == 1 || film == 4) && state >= 2 && state <= 0x1C) G<uint8_t>(player + 0x1B9) = 1;
+// A or Start on any pad, on the press
+static bool SkipPressed() {
+    static bool held = true;
+    bool down = false;
+    for (int port = 0; port < 4; port++) {
+        input::Pad pad = input::Poll(port);
+        down |= pad.analog[0] || (pad.buttons & 0x10);
+    }
+    bool pressed = down && !held;
+    held = down;
+    return pressed;
+}
+
+// The film player, one for every film: a film ends on a press unless the film table marks it as menu background,
+// the logos (LO_) and the film after pressing start (02_) as they begin when intros are skipped
+void SkipVideo(X86Context&, uint8_t*) {
+    bool pressed = SkipPressed();
+    uint32_t frontend = R32(0x2D45F0) + 0x20220, player = frontend + 0x4C;
+    uint32_t film = R32(frontend + 0x20C), state = R32(player + 0x1A8);
+    bool background = film < 27 && G<uint8_t>(0x29D9C8 + film * 12);
+    if (pressed) LOGI("film %u: press in state %X, flags %X", film, state, R32(player + 0x198));
+    if (background || state < 2 || state > 0x1C) return;
+    std::string name = ReadCString(player + 0x84, 8);
+    bool intro = name.rfind("LO_", 0) == 0 || name.rfind("02_", 0) == 0;
+    if (pressed || (game::Opt().skip_intros && intro)) G<uint8_t>(player + 0x1B9) = 1;
 }
