@@ -9,9 +9,12 @@
 
 #include "common/mouse_keyboard.h"
 #include "core/log.h"
+#include "game/flash.h"
 #include "xdk/hle.h"
 
 using namespace kernel;
+using flash::IsClip;
+using flash::Type;
 
 // degrees a count at sensitivity 1
 constexpr float kDegrees = 0.05f;
@@ -30,8 +33,8 @@ namespace {
 
 // front end: +0x44C the menu input of this tick, +0x450 set while it waits for a player's Start, +0x454 input on,
 // +0x455 input held off, +0x388C page leaving, +0x390F ready, +0x3710 stage to screen scale, +0x3840 page name
-// player: +0x18 its movies; display: +0x0C widescreen, +0xD428 width, +0xD42C height
-constexpr uint32_t kPlayer = 0x2EC988, kDisplay = 0x2D67F4;
+// display: +0x0C widescreen, +0xD428 width, +0xD42C height
+constexpr uint32_t kDisplay = 0x2D67F4;
 constexpr uint32_t kBounds = 0xE9310;  // eax = float box[4] out, ecx = clip: its box in its parent
 constexpr uint32_t kDeletedName = 0x2AC7EC;
 constexpr float kWideOffset = 106.6667f;  // the 640 stage sits this far in on a widescreen
@@ -41,10 +44,6 @@ enum Input : uint32_t { None, Up, Down, Left, Right, Confirm };
 constexpr const char* kButtonLinks[] = {"buttonUp", "buttonDown", "buttonLeft", "buttonRight"};
 constexpr const char* kValueLinks[] = {"upPoint", "downPoint", "leftPoint", "rightPoint"};
 
-// script value: +0 vtable (+0xC its members), +4 flags: 0x10 defined, type from bit 25
-uint32_t Type(uint32_t value) { return value && (R32(value + 4) & 0x10) ? R32(value + 4) >> 25 : 0; }
-// clip: +0x0C matrix a b c d x y, +0x44 parent, +0x50 next, +0x54 depth in 17 bits, +0x58 bit 0x100000 visible
-bool IsClip(uint32_t value) { return Type(value) >= 0xC && Type(value) <= 0x12; }
 
 // members: +0 slots, +4 {name, value} each, a name's text at +8
 uint32_t Members(X86Context& ctx, uint32_t value) {
@@ -69,13 +68,10 @@ float Number(uint32_t value) {
     return Type(value) == 7 ? float(int32_t(R32(value + 8))) : Type(value) == 6 ? G<float>(value + 8) : 0.0f;
 }
 
-// the page while it takes input: the movie at level 4
+// the page while it takes input
 uint32_t Page(uint32_t ui) {
-    if (!G<uint8_t>(ui + 0x390F) || R32(ui + 0x388C) || !G<uint8_t>(ui + 0x454) || G<uint8_t>(ui + 0x455)) return 0;
-    uint32_t player = R32(kPlayer), movies = player ? R32(player + 0x18) : 0;
-    for (uint32_t clip = movies ? R32(movies) : 0; clip; clip = R32(clip + 0x50))
-        if (int32_t(R32(clip + 0x54) << 15) >> 15 == 4) return Type(clip) == 0x12 ? clip : 0;
-    return 0;
+    bool input = G<uint8_t>(ui + 0x390F) && !R32(ui + 0x388C) && G<uint8_t>(ui + 0x454) && !G<uint8_t>(ui + 0x455);
+    return input ? flash::Level(4) : 0;
 }
 
 // a clip's box on the stage; false when hidden or empty

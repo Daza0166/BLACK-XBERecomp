@@ -47,7 +47,7 @@ struct Target {
     Action action;
     int button;
 };
-constexpr int kHostKey = -2, kWalk = -3;
+constexpr int kHostKey = -2, kWalk = -3, kStart = 12;
 // the game's default controller layout
 constexpr Target kActions[] = {
     {{"move_forward", "MOVE FORWARD", "W"}, 16},
@@ -240,6 +240,8 @@ void Keyboard(Pad& p) {
     }
     bool play = Play(), walk = false, used = std::any_of(std::begin(kFixed), std::end(kFixed), Down);
     int stick[8] = {};  // move forward back left right, look up down left right
+    static bool pause_held, pause_backs;
+    bool pause = false;
     for (size_t i = 0; i < kCount; i++) {
         int b = kActions[i].button;
         if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), Down)) continue;
@@ -248,8 +250,15 @@ void Keyboard(Pad& p) {
         else if (b >= 20 && !play) continue;
         else if (b >= 16) stick[b - 16] = 1;
         else if (b < 8) p.analog[b] = 0xFF;
-        else p.buttons |= uint16_t(1u << (b - 8));
+        else if (b == kStart) {
+            // pressed in a menu it backs out of it, and does nothing more once the menu has gone
+            if (!pause_held) pause_backs = g_menu;
+            pause = true;
+            if (!pause_backs) p.buttons |= uint16_t(1u << (b - 8));
+            else if (g_menu) p.analog[1] = 0xFF;
+        } else p.buttons |= uint16_t(1u << (b - 8));
     }
+    pause_held = pause;
     if (Down(VK_RETURN) || (!play && Down(VK_SPACE))) p.analog[0] = 0xFF;
     if (Down(VK_BACK)) p.analog[1] = 0xFF;
     if (!play)
@@ -274,6 +283,7 @@ void SetMenu(bool menu) {
     if (g_menu.exchange(menu) != menu) RefreshCursor();
 }
 
+bool KeyboardActive() { return g_keyboard; }
 bool CursorShown() { return g_menu && g_keyboard; }
 
 bool Cursor(float& x, float& y, bool& down) {
