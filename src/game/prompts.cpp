@@ -29,6 +29,10 @@ constexpr uint32_t kButtons[] = {0x53773143, 0xCA7E60F9, 0x371C9983, 0x401BA915,
                                  0x0A88862F, 0xDC57E320, 0x8D194B52, 0xB900C989};
 constexpr uint32_t kHintSize = 32;  // the game expands a hint's button into this many characters
 constexpr float kIconWidth = 28.0f;  // a prompt's text starts this far right of its icon's left edge
+// "hold (X) to pick up" takes its button from four glyph strings, of Y A B X
+constexpr uint32_t kPickupGlyphs = 0x2AB72C;
+constexpr int kPickupButtons[] = {3, 0, 1, 2};
+constexpr uint32_t kKeySize = 16;
 
 void Replace(std::string& text, std::string_view from, std::string_view to) {
     for (size_t at = 0; (at = text.find(from, at)) != std::string::npos; at += to.size())
@@ -120,4 +124,12 @@ void MenuPrompts(X86Context& ctx, uint8_t*) {
         was = keyboard;
     }
     Prompts(flash::Level(4), keyboard, 0);
+    static uint32_t glyphs[4], keys;
+    if (!keys && (keys = mem::AllocSystem(4 * kKeySize)))
+        for (uint32_t i = 0; i < 4; i++) glyphs[i] = R32(kPickupGlyphs + i * 4);
+    for (uint32_t i = 0; keys && i < 4; i++) {
+        std::string key = keyboard ? input::ButtonKey(kPickupButtons[i]) : std::string();
+        std::snprintf(static_cast<char*>(HostPtr(keys + i * kKeySize)), kKeySize, "%s", key.c_str());
+        W32(kPickupGlyphs + i * 4, key.empty() ? glyphs[i] : keys + i * kKeySize);
+    }
 }
