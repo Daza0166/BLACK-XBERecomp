@@ -322,6 +322,7 @@ private:
     bool tex_rt_[4] = {};  // stage samples a render target
     float tex_k_[4] = {1, 1, 1, 1};  // Extension::Sample's k
     float tex_wide_[4] = {};  // host texels per console texel of a target read into a smaller one, 0 otherwise
+    bool tex_blur_[4] = {};   // tex_wide_ for a blur between small targets
     uint32_t Samplers(const State& s, const TexInfo info[4]);
     ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
     ID3D12PipelineState* Pipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
@@ -1099,8 +1100,11 @@ ID3D12Resource* D3D12Backend::BindTexture(const State& s, int stage, TexInfo& in
         // a pass shrinking it averages each tap over a console texel, else upscaled taps skip texels and ghost
         Target* rt = GetTarget(s.rt, false, false);
         float k = float(t.w) / (t.gw * tex_k_[stage]);
-        if (!t.depth && box && k > 1.01f && rt && rt != &t && (t.gw > rt->gw || t.gh > rt->gh)) {
+        // a blur between the small targets reads texel for texel, whatever their sizes
+        bool blur = rt && t.gw < guest_w_ && rt->gw < guest_w_;
+        if (!t.depth && box && k > 1.01f && rt && rt != &t && (blur || t.gw > rt->gw || t.gh > rt->gh)) {
             tex_wide_[stage] = k;
+            tex_blur_[stage] = blur;
             info.flags |= kTexWide;
         }
         if (ext_) ext_->Sampled(d, &t, 0, info);
@@ -1422,9 +1426,10 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t 
                 float k = tex_k_[i];
                 c.texsize[i][2] = -0.5f / (float(d.width) * k);
                 c.texsize[i][3] = -0.5f / (float(d.height) * k);
-                // a 3 console texel box per tap keeps the console chain's glow width and brightness
+                // a 3 console texel box per tap keeps the console chain's glow width and brightness; a blur's taps
+                // are 7/6 texel apart, so each covers that much, a sample per host texel
                 if (tex_wide_[i] > 0) {
-                    float fw = 3.0f, n = std::ceil(fw * tex_wide_[i] * 0.5f);
+                    float fw = tex_blur_[i] ? 7.0f / 6 : 3.0f, n = std::ceil(fw * tex_wide_[i] * (tex_blur_[i] ? 1.0f : 0.5f));
                     c.spread[i][0] = fw / (n * float(d.width) * k);
                     c.spread[i][1] = fw / (n * float(d.height) * k);
                     c.spread[i][2] = n;
