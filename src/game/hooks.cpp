@@ -84,6 +84,17 @@ void AfterCreateDevice(X86Context& ctx, uint8_t* base) {
     started = true;
 }
 
+// Swap holds a frame for the vertical blanks the presentation interval asks, the game steps once a frame
+void SwapInterval(X86Context&, uint8_t*) {
+    using clock = std::chrono::steady_clock;
+    static auto next = clock::now();
+    uint32_t blanks = R32(0x2B2A08) & 3;  // 0 is immediate
+    next += std::chrono::microseconds(16667) * blanks;
+    auto now = clock::now();
+    if (!blanks || next < now) next = now;
+    std::this_thread::sleep_until(next);
+}
+
 // A or Start on any pad, on the press
 static bool SkipPressed() {
     static bool held = true;

@@ -6,6 +6,8 @@
 #endif
 #include <windows.h>
 
+#include <atomic>
+
 #include "app/app.h"
 #include "common/menu.h"
 #include "common/options.h"
@@ -41,9 +43,45 @@ bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
     return false;
 }
 
-// the game sees no input while the panel is open
-void Pad(int, input::Pad& pad) {
-    if (app::MenuOpen()) pad = input::Pad{.connected = pad.connected};
+// keys as the default controller layout: 0-7 analog, 8-15 buttons bit, 16-19 left stick up down right left
+struct Key {
+    int vk, to;
+};
+constexpr Key kKeys[] = {
+    {'W', 16}, {'S', 17}, {'D', 18}, {'A', 19},
+    {VK_UP, 8}, {VK_DOWN, 9}, {VK_LEFT, 10}, {VK_RIGHT, 11},
+    {'X', 8},                    // firing mode
+    {'H', 9},                    // health pack
+    {'Q', 11},                   // change weapon
+    {VK_LBUTTON, 7},             // fire
+    {VK_RBUTTON, 15},            // aim
+    {'G', 6},                    // grenade
+    {'C', 14},                   // crouch
+    {'R', 0}, {VK_RETURN, 0},    // reload, accept
+    {'F', 1}, {VK_BACK, 1},      // melee, back
+    {'E', 2},                    // action
+    {'T', 3},                    // silencer
+    {'B', 4}, {'N', 5},          // black, next music track
+    {VK_ESCAPE, 12}, {VK_TAB, 13},
+};
+
+// port 0 has the keyboard; the game sees no input while the panel is open
+void Pad(int port, input::Pad& pad) {
+    static std::atomic<bool> closing{false};  // the Escape that closed the panel is no pause
+    if (port == 0) pad.connected = true;
+    if (app::MenuOpen()) {
+        pad = input::Pad{.connected = pad.connected};
+        closing = true;
+        return;
+    }
+    if (port != 0 || GetForegroundWindow() != app::Window()) return;
+    if (closing && (closing = GetAsyncKeyState(VK_ESCAPE) < 0)) return;
+    for (const Key& k : kKeys) {
+        if (GetAsyncKeyState(k.vk) >= 0) continue;
+        if (k.to < 8) pad.analog[k.to] = 0xFF;
+        else if (k.to < 16) pad.buttons |= uint16_t(1 << (k.to - 8));
+        else (k.to < 18 ? pad.ly : pad.lx) = int16_t(k.to & 1 ? -32768 : 32767);
+    }
 }
 
 }  // namespace
