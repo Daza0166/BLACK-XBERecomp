@@ -113,6 +113,18 @@ X86_FUNC(sub_000BE3F0) {
     G<float>(t + 0x20) = time + float((steps() - before) * dt);
 }
 
+// The Flash menus and HUD tick in milliseconds, 33 a call: the real ones, the part of one carried over
+void MenuTick(X86Context& ctx, uint8_t*) {
+    using clock = std::chrono::steady_clock;
+    static clock::time_point last;
+    static float carry;
+    auto now = clock::now();
+    carry += std::min(std::chrono::duration<float>(now - last).count(), G<float>(0x2F3A38)) * 1000.0f;
+    last = now;
+    ctx.eax = uint32_t(carry);
+    carry -= float(ctx.eax);
+}
+
 // A or Start on any pad, on the press
 static bool SkipPressed() {
     static bool held = true;
