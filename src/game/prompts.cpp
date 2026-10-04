@@ -1,6 +1,8 @@
 // Button legends on keyboard and mouse: a menu prompt's icon goes and its text leads with the key, "(ENTER) confirm".
-// Texts naming the pad's buttons name the keys. A change of device sets the texts on screen again.
+// Texts naming the pad's buttons name the keys, a hint in play the key bound to its button. A change of device sets
+// the texts on screen again.
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -20,7 +22,12 @@ constexpr uint32_t kPlayerReady = 0x2ED408;
 // string ids
 constexpr uint32_t kConfirm = 0xE0CA7C5F, kBack = 0x64199B75, kBackspace = 0x32D594BD;
 constexpr uint32_t kPressStart[] = {0x2FCCE936, 0x905E4EE0, 0x661A3A37};
-constexpr uint32_t kButtonA = 0x53773143, kButtonB = 0xCA7E60F9;  // hints in play
+// a hint's "PRESS (A) :" strings, in the order the keyboard numbers the pad: A B X Y black white, the triggers,
+// dpad up down left right, start, back, the thumbs
+constexpr uint32_t kButtons[] = {0x53773143, 0xCA7E60F9, 0x371C9983, 0x401BA915, 0x1C8B6988, 0xD7C11E04,
+                                 0xDDC13733, 0xBCBBFDF2, 0xBB8906E1, 0xCA47AFA2, 0x53DFD8F1, 0xD4A32971,
+                                 0x0A88862F, 0xDC57E320, 0x8D194B52, 0xB900C989};
+constexpr uint32_t kHintSize = 32;  // the game expands a hint's button into this many characters
 constexpr float kIconWidth = 28.0f;  // a prompt's text starts this far right of its icon's left edge
 
 void Replace(std::string& text, std::string_view from, std::string_view to) {
@@ -36,7 +43,7 @@ std::string Wording(uint32_t id, const std::string& pad) {
     else if (std::find(std::begin(kPressStart), std::end(kPressStart), id) != std::end(kPressStart)) {
         Replace(text, "start", "enter");
         Replace(text, "START", "ENTER");
-    } else if (id != kButtonA && id != kButtonB) {
+    } else {
         // the font's A and B button glyphs
         Replace(text, "\xC2\xB2", "ENTER");
         Replace(text, "\xC2\xB9", "ESC");
@@ -79,7 +86,12 @@ X86_FUNC(sub_001F3A80) {
     if (!ctx.eax || !input::KeyboardActive()) return;
     std::lock_guard lock(g_lock);
     auto [it, fresh] = g_wordings.try_emplace(id, 0);
-    if (fresh) {
+    if (const uint32_t* button = std::find(std::begin(kButtons), std::end(kButtons), id); button != std::end(kButtons)) {
+        // follows the bindings: worded at every ask
+        std::string key = input::ButtonKey(int(button - kButtons));
+        if (key.empty() || (!it->second && !(it->second = mem::AllocSystem(kHintSize)))) return;
+        std::snprintf(static_cast<char*>(HostPtr(it->second)), kHintSize, "PRESS %s :", key.c_str());
+    } else if (fresh) {
         std::string text = Wording(id, ReadCString(ctx.eax, 1024));
         if (!text.empty() && (it->second = mem::AllocSystem(uint32_t(text.size() + 1))))
             std::memcpy(HostPtr(it->second), text.c_str(), text.size() + 1);

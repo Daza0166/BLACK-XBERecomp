@@ -27,6 +27,9 @@ void ResetBindings();
 void LoadBindings();     // after the settings load
 int PressedKey();        // a bindable key or mouse button held now, 0 for none
 bool PanelKey(int vk);   // the settings panel is bound to this key and no key capture wants it
+// the first key bound to a pad button, upper case, empty for none: 0 to 7 A B X Y black white and the triggers,
+// 8 to 15 dpad up down left right, start, back, the thumbs
+std::string ButtonKey(int button);
 
 // the game's own menus
 void SeenPad(const Pad& pad);  // a controller's report before the keys join it: its input hides the cursor

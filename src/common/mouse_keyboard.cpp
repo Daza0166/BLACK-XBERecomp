@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <iterator>
 #include <mutex>
@@ -350,6 +351,17 @@ void LoadBindings() {
         auto it = keys.find(kActions[i].action.id);
         g_binds[i] = Parse(it != keys.end() ? it->second : kActions[i].action.defaults);
     }
+}
+
+std::string ButtonKey(int button) {
+    std::lock_guard lock(g_bind_lock);
+    for (size_t i = 0; i < kCount; i++) {
+        if (kActions[i].button != button || g_binds[i].empty()) continue;
+        std::string name = g_binds[i][0] == VK_ESCAPE ? "Esc" : NameOf(g_binds[i][0]);
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::toupper(c)); });
+        return name;
+    }
+    return {};
 }
 
 int PressedKey() {
