@@ -136,7 +136,7 @@ void Changed(bool display) {
     Save();
 }
 
-enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed };
+enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov };
 
 enum class Kind { Heading, Value, Bind };
 struct Row {
@@ -150,11 +150,13 @@ constexpr Row kSettingsRows[] = {
     {Kind::Value, kDisplayMode, "DISPLAY MODE"},
     {Kind::Value, kResolution, "RESOLUTION"},
     {Kind::Value, kRenderResolution, "RENDER RESOLUTION"},
+    {Kind::Value, kFov, "FIELD OF VIEW"},
     {Kind::Value, kVsync, "VERTICAL SYNC"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
     {Kind::Heading, -1, "GRAPHICS"},
     {Kind::Value, kAniso, "ANISOTROPIC FILTERING"},
+    {Kind::Value, kReloadBlur, "RELOAD BLUR"},
     {Kind::Heading, -1, "GENERAL"},
     {Kind::Value, kSkipIntros, "SKIP INTROS"},
 };
@@ -213,6 +215,10 @@ std::string RowText(int id, int step) {
                           out.height * s.render_percent / 100);
             break;
         }
+        case kFov:
+            if (step) o.fov = 45 + uint32_t(StepIndex(std::clamp(int(o.fov), 45, 140) - 45, step, 96));
+            std::snprintf(text, sizeof(text), o.fov == 70 ? "%u (DEFAULT)" : "%u", o.fov);
+            break;
         case kMaxFps: {
             uint32_t cap = kFpsCaps[StepTable(kFpsCaps, s.fps_cap, step)];
             if (cap) std::snprintf(text, sizeof(text), "%u", cap);
@@ -229,6 +235,10 @@ std::string RowText(int id, int step) {
             break;
         case kAniso:
             std::snprintf(text, sizeof(text), "%s", kAnisoNames[StepTable(kAnisoValues, s.aniso, step)]);
+            break;
+        case kReloadBlur:
+            Flip(o.reload_blur, step);
+            std::snprintf(text, sizeof(text), "%s", OnOff(o.reload_blur));
             break;
         case kSkipIntros:
             Flip(o.skip_intros, step);
