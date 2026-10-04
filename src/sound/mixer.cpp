@@ -86,7 +86,16 @@ void Levels(Voice& v, float g[2][2]) {
     float d[3] = {v.p[0], v.p[1], v.p[2]};
     for (int i = 0; i < 3 && !rel; i++) d[i] -= g_listener[i];
     float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    float att = dist <= v.min_dist ? 1.0f : v.min_dist / std::min(dist, v.max_dist);
+    float att = 1;
+    if (dist > v.min_dist && v.curve.empty()) {
+        att = v.min_dist / std::min(dist, v.max_dist);
+    } else if (dist > v.min_dist && v.max_dist > v.min_dist) {
+        // points spread evenly from min to max distance, 1.0 at min
+        float at = (std::min(dist, v.max_dist) - v.min_dist) / (v.max_dist - v.min_dist) * v.curve.size();
+        size_t i = std::min(size_t(at), v.curve.size() - 1);
+        float from = i ? v.curve[i - 1] : 1.0f;
+        att = from + (v.curve[i] - from) * (at - i);
+    }
     float right[3] = {g_top[1] * g_front[2] - g_top[2] * g_front[1], g_top[2] * g_front[0] - g_top[0] * g_front[2],
                       g_top[0] * g_front[1] - g_top[1] * g_front[0]};
     float side = rel ? d[0] : d[0] * right[0] + d[1] * right[1] + d[2] * right[2];

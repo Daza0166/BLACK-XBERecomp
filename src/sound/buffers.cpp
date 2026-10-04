@@ -154,7 +154,12 @@ BUFFER(SetAllParameters, 3) {
     v.mode = R32(a[1] + 0x3C);
     return 0;
 }
-BUFFER(SetRolloffCurve, 4) { return 0; }
+// (this, points, count, apply)
+BUFFER(SetRolloffCurve, 4) {
+    v.curve.clear();
+    for (uint32_t i = 0; a[1] && i < std::min<uint32_t>(a[2], 64); i++) v.curve.push_back(F32(R32(a[1] + i * 4)));
+    return 0;
+}
 BUFFER(SetOutputBuffer, 2) { return 0; }  // the voice keeps its own mix bins
 BUFFER(SetFormat, 2) {
     ReadFormat(v, a[1]);
