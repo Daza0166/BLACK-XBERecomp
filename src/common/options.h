@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <map>
 #include <string>
 
@@ -10,6 +11,7 @@ struct Options {
     bool fps_counter = false;
     float mouse_sensitivity = 1.0f;
     bool invert_mouse = false;
+    uint32_t walk_speed = 50;  // percent of running, while the walk key is held
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();

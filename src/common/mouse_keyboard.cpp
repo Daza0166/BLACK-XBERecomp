@@ -39,37 +39,47 @@ uint64_t NowMs() {
     return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(since).count()) + 1;
 }
 
-// what an action presses: 0-7 analog A B X Y black white LT RT, 8-15 the buttons bits, 16-19 the move keys
+// what an action presses: 0-7 analog A B X Y black white LT RT, 8-15 the buttons bits, 16-19 the move keys,
+// 20-23 the look keys
 struct Target {
     Action action;
     int button;
 };
-constexpr int kHostKey = -2;
+constexpr int kHostKey = -2, kWalk = -3;
 // the game's default controller layout
 constexpr Target kActions[] = {
     {{"move_forward", "MOVE FORWARD", "W"}, 16},
     {{"move_back", "MOVE BACK", "S"}, 17},
-    {{"strafe_left", "MOVE LEFT", "A"}, 18},
-    {{"strafe_right", "MOVE RIGHT", "D"}, 19},
+    {{"strafe_left", "STRAFE LEFT", "A"}, 18},
+    {{"strafe_right", "STRAFE RIGHT", "D"}, 19},
+    {{"walk", "WALK", "Alt"}, kWalk},
+    {{"crouch", "CROUCH", "C"}, 14},
     {{"fire", "FIRE", "LMB"}, 7},
     {{"aim", "AIM", "RMB"}, 15},
+    {{"melee", "MELEE", "V"}, 1},
     {{"reload", "RELOAD", "R"}, 0},
-    {{"action", "ACTION", "E"}, 2},
-    {{"melee", "MELEE", "F"}, 1},
-    {{"grenade", "GRENADE", "G"}, 6},
-    {{"crouch", "CROUCH", "C,Ctrl"}, 14},
+    {{"interact", "INTERACT", "F"}, 2},
+    {{"grenade", "THROW GRENADE", "G"}, 6},
+    {{"weapon_up", "CHANGE WEAPON UP", "E"}, 11},
+    {{"weapon_down", "CHANGE WEAPON DOWN", "Q"}, 10},
     {{"suppressor", "TOGGLE SUPPRESSOR", "T"}, 3},
-    {{"firing_mode", "CHANGE FIRING MODE", "X"}, 8},
+    {{"firing_mode", "FIRING MODE / SCOPE ZOOM", "X"}, 8},
     {{"health_pack", "HEALTH PACK", "H"}, 9},
-    {{"weapon_up", "CHANGE WEAPON UP", "Q"}, 11},
-    {{"weapon_down", "CHANGE WEAPON DOWN", "Z"}, 10},
     {{"next_track", "NEXT MUSIC TRACK", "N"}, 5},
-    {{"pause", "PAUSE", "Escape"}, 12},
-    {{"back", "BACK BUTTON", "Tab"}, 13},
+    {{"back", "OBJECTIVES", "Tab"}, 13},
+    {{"pause", "PAUSE MENU", "Escape"}, 12},
     {{"settings_panel", "SETTINGS PANEL", "F10"}, kHostKey},
+    {{"look_up", "LOOK UP", "Up"}, 20},
+    {{"look_down", "LOOK DOWN", "Down"}, 21},
+    {{"look_left", "LOOK LEFT", "Left"}, 22},
+    {{"look_right", "LOOK RIGHT", "Right"}, 23},
 };
 constexpr size_t kCount = std::size(kActions);
-constexpr size_t kPanelAction = kCount - 1;
+constexpr size_t kPanelAction = [] {
+    size_t i = 0;
+    while (kActions[i].button != kHostKey) i++;
+    return i;
+}();
 // the wheel changes weapon
 constexpr uint16_t kWheelUp = 1 << 3, kWheelDown = 1 << 2;
 
@@ -99,7 +109,7 @@ constexpr Name kNames[] = {
     {VK_OEM_COMMA, "Comma"}, {VK_OEM_PERIOD, "Period"}, {VK_OEM_2, "Slash"},
 };
 
-// not bindable: the arrows move at full tilt, Enter accepts, Backspace backs out
+// not bindable: in the game's menus the arrows are the dpad, Enter accepts, Backspace backs out
 constexpr int kFixed[] = {VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_BACK};
 
 std::mutex g_bind_lock;
@@ -215,23 +225,26 @@ void Keyboard(Pad& p) {
             if (Down(vk)) return;
         g_settle = false;
     }
-    int move[4] = {};
+    bool play = Play(), walk = false;
+    int stick[8] = {};  // move forward back left right, look up down left right
     for (size_t i = 0; i < kCount; i++) {
         int b = kActions[i].button;
         if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), Down)) continue;
-        if (b >= 16) move[b - 16] = 1;
+        if (b == kWalk) walk = true;
+        else if (b >= 20 && !play) continue;
+        else if (b >= 16) stick[b - 16] = 1;
         else if (b < 8) p.analog[b] = 0xFF;
         else p.buttons |= uint16_t(1u << (b - 8));
     }
     if (Down(VK_RETURN)) p.analog[0] = 0xFF;
     if (Down(VK_BACK)) p.analog[1] = 0xFF;
-    int x = move[3] - move[2], y = move[0] - move[1];
-    if (int ax = Down(VK_RIGHT) - Down(VK_LEFT), ay = Down(VK_UP) - Down(VK_DOWN); ax || ay) {
-        x = ax;
-        y = ay;
-    }
-    if (x) p.lx = int16_t(x * 32767);
-    if (y) p.ly = int16_t(y * 32767);
+    if (!play)
+        for (int i = 0; i < 4; i++) p.buttons |= uint16_t(Down(kFixed[i]) << i);
+    float speed = walk ? float(game::Opt().walk_speed) / 100.0f : 1.0f;
+    if (int x = stick[3] - stick[2]) p.lx = int16_t(float(x) * speed * 32767.0f);
+    if (int y = stick[0] - stick[1]) p.ly = int16_t(float(y) * speed * 32767.0f);
+    if (int x = stick[7] - stick[6]) p.rx = int16_t(x * 32767);
+    if (int y = stick[4] - stick[5]) p.ry = int16_t(y * 32767);
     if (NowMs() < g_tap_until) p.buttons |= g_tap;
 }
 

@@ -30,6 +30,13 @@ bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
             }
             if (msg == WM_KEYDOWN && wp == VK_ESCAPE && MenuOpen() && !Capturing()) ToggleMenu();
             break;
+        case WM_SYSCOMMAND:
+            // a bound Alt must not open the window menu
+            if ((wp & 0xFFF0) == SC_KEYMENU) {
+                *result = 0;
+                return true;
+            }
+            break;
         case WM_INPUT:
             input::OnRawInput(reinterpret_cast<void*>(lp));
             break;
@@ -93,7 +100,8 @@ const app::GameInfo app::kGame = {
                L"chars, data, export, language, levels, sound and videos folders beside it.",
     .images = {{"default.xbe", "Black"}},
     .options = {{"skip_intros", &game::Opt().skip_intros, nullptr}, {"fps_counter", &game::Opt().fps_counter, nullptr},
-                {"invert_mouse", &game::Opt().invert_mouse, nullptr}},
+                {"invert_mouse", &game::Opt().invert_mouse, nullptr},
+                {"walk_speed", nullptr, &game::Opt().walk_speed}},
     .load = game::Load,
     .save = game::Save,
     .init = input::LoadBindings,

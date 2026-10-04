@@ -136,7 +136,7 @@ void Changed(bool display) {
     Save();
 }
 
-enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kSkipIntros, kSensitivity, kInvertMouse };
+enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed };
 
 enum class Kind { Heading, Value, Bind };
 struct Row {
@@ -163,11 +163,12 @@ const std::vector<Row>& InputRows() {
     static const std::vector<Row> list = [] {
         std::vector<Row> out = {{Kind::Heading, -1, "MOUSE"},
                                 {Kind::Value, kSensitivity, "MOUSE SENSITIVITY"},
-                                {Kind::Value, kInvertMouse, "INVERT MOUSE"},
+                                {Kind::Value, kInvertMouse, "INVERT LOOK"},
                                 {Kind::Heading, -1, "KEYBOARD"}};
         size_t count = 0;
         const input::Action* actions = input::Actions(&count);
         for (size_t i = 0; i < count; i++) out.push_back({Kind::Bind, int(i), actions[i].label});
+        out.push_back({Kind::Value, kWalkSpeed, "WALK SPEED"});
         return out;
     }();
     return list;
@@ -245,6 +246,11 @@ std::string RowText(int id, int step) {
             Flip(o.invert_mouse, step);
             std::snprintf(text, sizeof(text), "%s", OnOff(o.invert_mouse));
             break;
+        case kWalkSpeed:
+            // 10% to 100% in steps of 5
+            if (step) o.walk_speed = 10 + 5 * uint32_t(StepIndex((std::clamp(int(o.walk_speed), 10, 100) - 10) / 5, step, 19));
+            std::snprintf(text, sizeof(text), "%u%%", o.walk_speed);
+            break;
     }
     if (step) Changed(display);
     return text;
@@ -261,6 +267,7 @@ void RestoreDefaults(int page) {
     if (page == 1) {
         o.mouse_sensitivity = game::Options{}.mouse_sensitivity;
         o.invert_mouse = false;
+        o.walk_speed = game::Options{}.walk_speed;
         input::ResetBindings();
         return;
     }
@@ -269,6 +276,7 @@ void RestoreDefaults(int page) {
     o = game::Options{};
     o.mouse_sensitivity = keep.mouse_sensitivity;
     o.invert_mouse = keep.invert_mouse;
+    o.walk_speed = keep.walk_speed;
     o.keys = keep.keys;
     Changed(true);
 }
