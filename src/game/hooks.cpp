@@ -3,6 +3,7 @@
 #include <thread>
 
 #include "app/app.h"
+#include "common/options.h"
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
@@ -80,4 +81,11 @@ void AfterCreateDevice(X86Context& ctx, uint8_t* base) {
     static bool started = false;
     if (!started) StartHostThread("vertical blank", VerticalBlank);
     started = true;
+}
+
+// the frontend's film player: the logos (1) and the film after pressing start (4) end as they begin
+void SkipVideo(X86Context& ctx, uint8_t*) {
+    if (!game::Opt().skip_intros) return;
+    uint32_t film = R32(ctx.ebp + 0x20C), player = ctx.ebp + 0x4C, state = R32(player + 0x1A8);
+    if ((film == 1 || film == 4) && state >= 2 && state <= 0x1C) G<uint8_t>(player + 0x1B9) = 1;
 }
