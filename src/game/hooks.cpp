@@ -1,4 +1,5 @@
 // Hooks for default.xbe
+#include <algorithm>
 #include <chrono>
 #include <thread>
 
@@ -84,15 +85,32 @@ void AfterCreateDevice(X86Context& ctx, uint8_t* base) {
     started = true;
 }
 
-// Swap holds a frame for the vertical blanks the presentation interval asks, the game steps once a frame
-void SwapInterval(X86Context&, uint8_t*) {
+// seconds the last frame took, the frame time the game was made for at most
+static float FrameTime() {
     using clock = std::chrono::steady_clock;
-    static auto next = clock::now();
-    uint32_t blanks = R32(0x2B2A08) & 3;  // 0 is immediate
-    next += std::chrono::microseconds(16667) * blanks;
-    auto now = clock::now();
-    if (!blanks || next < now) next = now;
-    std::this_thread::sleep_until(next);
+    static clock::time_point last;
+    static uint32_t frame;
+    static float dt = G<float>(0x2F3A38);
+    if (uint32_t f = R32(0x2F4368); f != frame) {
+        auto now = clock::now();
+        dt = std::min(std::chrono::duration<float>(now - last).count(), G<float>(0x2F3A38));
+        frame = f;
+        last = now;
+    }
+    return dt;
+}
+
+// The game's timers step one fixed frame time a frame: they step the real one, so any frame rate plays at speed
+X86_EXTERN_FUNC(__imp__sub_000BE3F0);
+X86_FUNC(sub_000BE3F0) {
+    uint32_t t = ctx.ecx;
+    auto steps = [t] { return R32(t + 0xC) + double(R32(t + 0x10)) / std::max(R32(t + 0x18), 1u); };
+    double before = steps();
+    float time = G<float>(t + 0x20);
+    __imp__sub_000BE3F0(ctx, base);
+    float dt = FrameTime();
+    G<float>(t + 0x1C) = dt / std::max(R32(t + 0x18), 1u);
+    G<float>(t + 0x20) = time + float((steps() - before) * dt);
 }
 
 // A or Start on any pad, on the press
@@ -116,6 +134,11 @@ void SkipVideo(X86Context&, uint8_t*) {
     uint32_t film = R32(frontend + 0x20C), state = R32(player + 0x1A8);
     bool background = film < 27 && G<uint8_t>(0x29D9C8 + film * 12);
     if (pressed) LOGI("film %u: press in state %X, flags %X", film, state, R32(player + 0x198));
+    // a film keeps the frame time of its start: its frame length, and its clock's step
+    if (uint32_t movie = R32(player); movie && state >= 4 && state <= 0x1C) {
+        G<float>(movie + 0x54) = G<float>(0x2F3A38);
+        G<float>(movie + 0x5C) = G<float>(R32(0x2D45F0) + 0x2013C);
+    }
     if (background || state < 2 || state > 0x1C) return;
     std::string name = ReadCString(player + 0x84, 8);
     bool intro = name.rfind("LO_", 0) == 0 || name.rfind("02_", 0) == 0;
