@@ -32,7 +32,7 @@ std::atomic<uint64_t> g_take_ms{0};     // TakeMouse, asked every tick in play
 std::atomic<uint64_t> g_capture_ms{0};  // PressedKey
 std::atomic<bool> g_settle{false};
 std::atomic<uint16_t> g_tap{0};
-std::atomic<uint64_t> g_tap_until{0};
+std::atomic<uint64_t> g_tap_until{0}, g_confirm_until{0};
 std::atomic<bool> g_menu{false}, g_keyboard{true};
 std::atomic<int> g_wheel{0};
 constexpr uint64_t kPlayMs = 250, kTapMs = 80;
@@ -260,7 +260,7 @@ void Keyboard(Pad& p) {
         } else p.buttons |= uint16_t(1u << (b - 8));
     }
     pause_held = pause;
-    if (Down(VK_RETURN) || (!play && Down(VK_SPACE))) p.analog[0] = 0xFF;
+    if (Down(VK_RETURN) || (!play && Down(VK_SPACE)) || NowMs() < g_confirm_until) p.analog[0] = 0xFF;
     if (Down(VK_BACK)) p.analog[1] = 0xFF;
     if (!play)
         for (int i = 0; i < 4; i++) p.buttons |= uint16_t(Down(kFixed[i]) << i);
@@ -303,6 +303,8 @@ bool Cursor(float& x, float& y, bool& down) {
 }
 
 int TakeWheel() { return g_wheel.exchange(0); }
+
+void TapConfirm() { g_confirm_until = NowMs() + kTapMs; }
 
 const Action* Actions(size_t* count) {
     static const auto list = [] {

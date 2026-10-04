@@ -1,6 +1,6 @@
 // Button legends on keyboard and mouse: a menu prompt's icon goes and its text leads with the key, "(ENTER) confirm".
 // Texts naming the pad's buttons name the keys, a hint in play the key bound to its button. A change of device sets
-// the texts on screen again.
+// the texts on screen again. Texts naming the console name the PC, whatever the device.
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -35,9 +35,14 @@ void Replace(std::string& text, std::string_view from, std::string_view to) {
         text.replace(at, from.size(), to);
 }
 
-// a string as the keyboard words it, empty when it stays
-std::string Wording(uint32_t id, const std::string& pad) {
+// a string as this PC words it, on the keyboard with its keys; empty when it stays
+std::string Wording(uint32_t id, const std::string& pad, bool keyboard) {
     std::string text = pad;
+    Replace(text, "XBOX CONSOLE", "PC");
+    Replace(text, "XBOX HARD DISK", "HARD DISK");
+    Replace(text, "XBOX", "PC");
+    Replace(text, "Xbox", "PC");
+    if (!keyboard) return text == pad ? std::string() : text;
     if (id == kConfirm) text = "(ENTER) " + text;
     else if (id == kBack || id == kBackspace) text = "(ESC) " + text;
     else if (std::find(std::begin(kPressStart), std::end(kPressStart), id) != std::end(kPressStart)) {
@@ -52,7 +57,8 @@ std::string Wording(uint32_t id, const std::string& pad) {
 }
 
 std::mutex g_lock;
-std::unordered_map<uint32_t, uint32_t> g_wordings;  // string id to its keyboard wording in guest memory, 0 for none
+// string id, and in bit 0 the keyboard, to its wording in guest memory, 0 for none
+std::unordered_map<uint64_t, uint32_t> g_wordings;
 
 // a prompt is a clip of a "Button" icon and a "Text": on the keyboard the icon goes and the text takes its place
 void Prompts(uint32_t clip, bool keyboard, int depth) {
@@ -83,16 +89,18 @@ X86_EXTERN_FUNC(__imp__sub_001F3A80);
 X86_FUNC(sub_001F3A80) {
     uint32_t id = R32(ctx.esp + 4);
     __imp__sub_001F3A80(ctx, base);
-    if (!ctx.eax || !input::KeyboardActive()) return;
+    if (!ctx.eax) return;
+    bool keyboard = input::KeyboardActive();
     std::lock_guard lock(g_lock);
-    auto [it, fresh] = g_wordings.try_emplace(id, 0);
-    if (const uint32_t* button = std::find(std::begin(kButtons), std::end(kButtons), id); button != std::end(kButtons)) {
+    auto [it, fresh] = g_wordings.try_emplace(uint64_t(id) << 1 | keyboard, 0);
+    if (const uint32_t* button = std::find(std::begin(kButtons), std::end(kButtons), id);
+        keyboard && button != std::end(kButtons)) {
         // follows the bindings: worded at every ask
         std::string key = input::ButtonKey(int(button - kButtons));
         if (key.empty() || (!it->second && !(it->second = mem::AllocSystem(kHintSize)))) return;
         std::snprintf(static_cast<char*>(HostPtr(it->second)), kHintSize, "PRESS %s :", key.c_str());
     } else if (fresh) {
-        std::string text = Wording(id, ReadCString(ctx.eax, 1024));
+        std::string text = Wording(id, ReadCString(ctx.eax, 1024), keyboard);
         if (!text.empty() && (it->second = mem::AllocSystem(uint32_t(text.size() + 1))))
             std::memcpy(HostPtr(it->second), text.c_str(), text.size() + 1);
     }

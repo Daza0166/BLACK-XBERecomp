@@ -39,5 +39,6 @@ bool CursorShown();            // in a menu with the keyboard or mouse used last
 // the cursor in the shown frame, 0 to 1 across and down, and the left button; false while it is not shown
 bool Cursor(float& x, float& y, bool& down);
 int TakeWheel();               // wheel notches in the menus since the last call, up positive
+void TapConfirm();             // a short press of A on the pad itself
 
 }  // namespace input

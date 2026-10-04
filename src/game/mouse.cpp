@@ -181,9 +181,9 @@ void Menu(X86Context& ctx, uint32_t ui) {
     static bool held;
     static float seen_x, seen_y;
     const char* name = static_cast<const char*>(HostPtr(ui + 0x3840));
-    bool menu = *name && !R32(ui + 0x450) &&
-                std::none_of(std::begin(kFilms), std::end(kFilms),
-                             [name](const char* film) { return _strnicmp(name, film, std::strlen(film)) == 0; });
+    bool menu = *name && std::none_of(std::begin(kFilms), std::end(kFilms), [name](const char* film) {
+        return _strnicmp(name, film, std::strlen(film)) == 0;
+    });
     input::SetMenu(menu);
     int wheel = input::TakeWheel();
     float x, y;
@@ -191,6 +191,12 @@ void Menu(X86Context& ctx, uint32_t ui) {
     bool pointer = menu && input::Cursor(x, y, down);
     bool click = down && !held;
     held = down;
+    // waiting for a player's Start the game takes the pad that pressed: a click presses A on it
+    if (pointer && R32(ui + 0x450)) {
+        if (click) input::TapConfirm();
+        aim = {};
+        return;
+    }
     uint32_t root = pointer ? Page(ui) : 0, list = Member(ctx, root, "MyMenu"), focus = Member(ctx, list, "mFocusButton");
     uint32_t display = R32(kDisplay);
     float sx = G<float>(ui + 0x3710), sy = G<float>(ui + 0x3714);

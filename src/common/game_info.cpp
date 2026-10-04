@@ -45,7 +45,8 @@ bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
             break;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT) {
-                SetCursor(MenuOpen() || input::CursorShown() ? LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)) : nullptr);
+                SetCursor(MenuOpen() ? LoadCursorW(nullptr, MAKEINTRESOURCEW(32512))
+                          : input::CursorShown() ? static_cast<HCURSOR>(CursorImage()) : nullptr);
                 *result = TRUE;
                 return true;
             }
