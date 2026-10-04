@@ -160,22 +160,42 @@ void SwayEnd(X86Context&, uint8_t*) {
 
 // The physics world steps once a frame by the frame time of the level's start and bodies hold their move a step:
 // both follow the real frame time, before the characters write theirs
+static bool g_rest_tick;
 void PhysicsTime(X86Context&, uint8_t*) {
     uint32_t physics = R32(0x2D45F4), solver = physics ? R32(physics) : 0, world = solver ? R32(solver + 0x18) : 0;
-    float dt = FrameTime();
+    float dt = FrameTime(), share = FrameShare();
     if (!world || !(dt > 0)) return;
     float& step = G<float>(world + 0x380);
-    if (step == dt) return;
-    if (step > 0) {
-        static const uint32_t kMove[] = {0x20, 0x24, 0x28, 0x30, 0x34, 0x38};
+    if (step > 0 && step != dt) {
+        static const uint32_t kMove[] = {0x20, 0x24, 0x28, 0x30, 0x34, 0x38}, kGravity[] = {0x90, 0x94, 0x98};
+        float by = dt / step;
         uint32_t body = R32(world + 0x29C);
-        for (int left = 4096; body && body != world + 0x270 && left; left--, body = R32(body + 0x2C))
-            for (uint32_t at : kMove) G<float>(body + at) *= dt / step;
+        for (int left = 4096; body && body != world + 0x270 && left; left--, body = R32(body + 0x2C)) {
+            for (uint32_t at : kMove) G<float>(body + at) *= by;
+            for (uint32_t at : kGravity) G<float>(body + at) *= by * by;
+        }
     }
     step = dt;
     G<float>(world + 0x384) = 1 / dt;
     for (int i = 0; i < 16; i += 4) G<float>(world + 0x370 + i) = G<float>(world + 0x360 + i) * dt * dt;  // gravity
+    // a body rests once its move a step stays under a limit for a count of steps: the limit shrinks with the
+    // step, the count runs at the game's frame rate
+    static float limit, written, ticks;
+    float& now = G<float>(world + 0x390);
+    if (now != written) limit = now;
+    now = written = limit * share * share;
+    ticks += share;
+    g_rest_tick = ticks >= 1;
+    if (g_rest_tick) ticks -= 1;
 }
+bool BodyRestTick(X86Context&, uint8_t*) { return g_rest_tick; }
+
+// a body's damping is a factor a step, its top speed a move a step
+void BodyDamping(X86Context& ctx, uint8_t*) {
+    for (int i = 0; i < 2; i++)
+        if (float& keep = ctx.xmm[i].f[0]; keep > 0) keep = std::pow(keep, FrameShare());
+}
+void BodyTopSpeed(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
 
 // A or Start on any pad, on the press
 static bool SkipPressed() {
