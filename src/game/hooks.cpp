@@ -138,6 +138,15 @@ void ZoomStep(X86Context& ctx, uint8_t*) {
                           : old * std::pow(now / old, FrameShare());
 }
 
+// The view of play, 70 over the zoom, widened to the setting. Scripted cameras write theirs after this
+void FieldOfView(X86Context& ctx, uint8_t*) {
+    constexpr float kHalf = 3.14159265f / 360.0f;
+    uint32_t wanted = std::clamp(game::Opt().fov, 45u, 140u);
+    if (wanted == 70) return;
+    float& fov = ctx.xmm[1].f[0];
+    fov = std::atan(std::tan(fov * kHalf) * std::tan(wanted * kHalf) / std::tan(70 * kHalf)) / kHalf;
+}
+
 // recoil dies away by a factor a frame
 void RecoilDecay(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] = std::pow(ctx.xmm[0].f[0], FrameShare()); }
 
@@ -196,6 +205,9 @@ void BodyDamping(X86Context& ctx, uint8_t*) {
         if (float& keep = ctx.xmm[i].f[0]; keep > 0) keep = std::pow(keep, FrameShare());
 }
 void BodyTopSpeed(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
+
+// reload animations start the screen blur
+bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur; }
 
 // A or Start on any pad, on the press
 static bool SkipPressed() {
