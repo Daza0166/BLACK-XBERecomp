@@ -18,6 +18,7 @@ constexpr uint32_t kQuads = 0x2F3710, kTexture = 0x56EF30;
 // the small font, +8 its glyph width scale
 constexpr uint32_t kFont = 0x2F433C, kWidthScale = 0x08;
 constexpr float kSize = 15, kMargin = 8;  // on a frame 480 high
+constexpr float kGrey = 186 / 255.0f;  // the HUD's text
 
 }  // namespace
 
@@ -38,7 +39,7 @@ void DrawFps(X86Context& ctx, uint8_t*) {
     CallGuest(ctx, kBegin, {});
     width = game_width * narrow;
     for (int shadow = 1; shadow >= 0; shadow--) {
-        for (int i = 0; i < 4; i++) G<float>(colour + i * 4) = shadow && i < 3 ? 0.0f : 1.0f;
+        for (int i = 0; i < 4; i++) G<float>(colour + i * 4) = i == 3 ? 1.0f : shadow ? 0.0f : kGrey;
         float x = (kMargin + shadow) * unit * narrow, y = (kMargin + shadow) * unit;
         CallGuest(ctx, kText, {font, chars, std::bit_cast<uint32_t>(x), std::bit_cast<uint32_t>(y),
                                std::bit_cast<uint32_t>(kSize * unit), colour});

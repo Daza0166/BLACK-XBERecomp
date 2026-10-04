@@ -138,13 +138,20 @@ void ZoomStep(X86Context& ctx, uint8_t*) {
                           : old * std::pow(now / old, FrameShare());
 }
 
-// The view of play, 70 over the zoom, widened to the setting. Scripted cameras write theirs after this
+constexpr float kHalf = 3.14159265f / 360.0f;
+
+// tangent of a setting's half angle over that of the game's 70 degrees
+static float Widen(uint32_t degrees) { return std::tan(std::clamp(degrees, 45u, 140u) * kHalf) / std::tan(70 * kHalf); }
+
+// The view of play, 70 over the zoom: the setting from the hip, the game's own once the aim is in.
+// ecx the weapon, xmm0 its zoom. Scripted cameras write theirs after this
 void FieldOfView(X86Context& ctx, uint8_t*) {
-    constexpr float kHalf = 3.14159265f / 360.0f;
-    uint32_t wanted = std::clamp(game::Opt().fov, 45u, 140u);
-    if (wanted == 70) return;
+    uint32_t data = R32(ctx.ecx + 0xEC);
+    float aim = data ? G<float>(data + 0xB4) : 1, zoom = ctx.xmm[0].f[0];
+    float hip = aim > 1 ? std::clamp((aim - zoom) / (aim - 1), 0.0f, 1.0f) : 1.0f;
+    float view = 1 + (Widen(game::Opt().fov) - 1) * hip;
     float& fov = ctx.xmm[1].f[0];
-    fov = std::atan(std::tan(fov * kHalf) * std::tan(wanted * kHalf) / std::tan(70 * kHalf)) / kHalf;
+    if (view != 1) fov = std::atan(std::tan(fov * kHalf) * view) / kHalf;
 }
 
 // recoil dies away by a factor a frame
