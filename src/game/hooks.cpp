@@ -158,6 +158,25 @@ void SwayEnd(X86Context&, uint8_t*) {
     g_sway = 0;
 }
 
+// The physics world steps once a frame by the frame time of the level's start and bodies hold their move a step:
+// both follow the real frame time, before the characters write theirs
+void PhysicsTime(X86Context&, uint8_t*) {
+    uint32_t physics = R32(0x2D45F4), solver = physics ? R32(physics) : 0, world = solver ? R32(solver + 0x18) : 0;
+    float dt = FrameTime();
+    if (!world || !(dt > 0)) return;
+    float& step = G<float>(world + 0x380);
+    if (step == dt) return;
+    if (step > 0) {
+        static const uint32_t kMove[] = {0x20, 0x24, 0x28, 0x30, 0x34, 0x38};
+        uint32_t body = R32(world + 0x29C);
+        for (int left = 4096; body && body != world + 0x270 && left; left--, body = R32(body + 0x2C))
+            for (uint32_t at : kMove) G<float>(body + at) *= dt / step;
+    }
+    step = dt;
+    G<float>(world + 0x384) = 1 / dt;
+    for (int i = 0; i < 16; i += 4) G<float>(world + 0x370 + i) = G<float>(world + 0x360 + i) * dt * dt;  // gravity
+}
+
 // A or Start on any pad, on the press
 static bool SkipPressed() {
     static bool held = true;
