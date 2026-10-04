@@ -6,24 +6,35 @@
 #endif
 #include <windows.h>
 
-#include <atomic>
+#include <toml++/toml.hpp>
 
 #include "app/app.h"
 #include "common/menu.h"
+#include "common/mouse_keyboard.h"
 #include "common/options.h"
-#include "core/input.h"
 
 namespace game {
 
 namespace {
 
-// the panel's keys; F3 and the display mode stay with the host
+// the panel's keys and the mouse; F3 and the display mode stay with the host
 bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
     using namespace app;
     switch (msg) {
         case WM_KEYDOWN:
-            if (wp == VK_F10) ToggleMenu();
-            if (wp == VK_ESCAPE && MenuOpen()) ToggleMenu();
+        case WM_SYSKEYDOWN:
+            if (!(lp & (1 << 30)) && input::PanelKey(int(wp))) {
+                ToggleMenu();
+                *result = 0;
+                return true;
+            }
+            if (msg == WM_KEYDOWN && wp == VK_ESCAPE && MenuOpen() && !Capturing()) ToggleMenu();
+            break;
+        case WM_INPUT:
+            input::OnRawInput(reinterpret_cast<void*>(lp));
+            break;
+        case WM_ACTIVATE:
+            if (LOWORD(wp) == WA_INACTIVE) input::ReleaseCursor();
             break;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT) {
@@ -32,56 +43,34 @@ bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
                 return true;
             }
             break;
-        case WM_SYSKEYDOWN:
-            if (wp == VK_F10) {
-                ToggleMenu();
-                *result = 0;
-                return true;
-            }
-            break;
     }
     return false;
 }
 
-// keys as the default controller layout: 0-7 analog, 8-15 buttons bit, 16-19 left stick up down right left
-struct Key {
-    int vk, to;
-};
-constexpr Key kKeys[] = {
-    {'W', 16}, {'S', 17}, {'D', 18}, {'A', 19},
-    {VK_UP, 8}, {VK_DOWN, 9}, {VK_LEFT, 10}, {VK_RIGHT, 11},
-    {'X', 8},                    // firing mode
-    {'H', 9},                    // health pack
-    {'Q', 11},                   // change weapon
-    {VK_LBUTTON, 7},             // fire
-    {VK_RBUTTON, 15},            // aim
-    {'G', 6},                    // grenade
-    {'C', 14},                   // crouch
-    {'R', 0}, {VK_RETURN, 0},    // reload, accept
-    {'F', 1}, {VK_BACK, 1},      // melee, back
-    {'E', 2},                    // action
-    {'T', 3},                    // silencer
-    {'B', 4}, {'N', 5},          // black, next music track
-    {VK_ESCAPE, 12}, {VK_TAB, 13},
-};
-
 // port 0 has the keyboard; the game sees no input while the panel is open
 void Pad(int port, input::Pad& pad) {
-    static std::atomic<bool> closing{false};  // the Escape that closed the panel is no pause
     if (port == 0) pad.connected = true;
-    if (app::MenuOpen()) {
-        pad = input::Pad{.connected = pad.connected};
-        closing = true;
-        return;
-    }
-    if (port != 0 || GetForegroundWindow() != app::Window()) return;
-    if (closing && (closing = GetAsyncKeyState(VK_ESCAPE) < 0)) return;
-    for (const Key& k : kKeys) {
-        if (GetAsyncKeyState(k.vk) >= 0) continue;
-        if (k.to < 8) pad.analog[k.to] = 0xFF;
-        else if (k.to < 16) pad.buttons |= uint16_t(1 << (k.to - 8));
-        else (k.to < 18 ? pad.ly : pad.lx) = int16_t(k.to & 1 ? -32768 : 32767);
-    }
+    if (app::MenuOpen()) pad = input::Pad{.connected = pad.connected};
+    else if (port == 0) input::Keyboard(pad);
+}
+
+// what the options list cannot hold
+void Load(const void* table) {
+    const toml::table& t = *static_cast<const toml::table*>(table);
+    Options& o = Opt();
+    o.mouse_sensitivity = float(t["mouse_sensitivity"].value_or(double(o.mouse_sensitivity)));
+    if (const toml::table* keys = t["keys"].as_table())
+        for (auto&& [id, value] : *keys)
+            if (auto v = value.value<std::string>()) o.keys[std::string(id.str())] = *v;
+}
+
+void Save(void* table) {
+    toml::table& t = *static_cast<toml::table*>(table);
+    const Options& o = Opt();
+    t.insert("mouse_sensitivity", double(o.mouse_sensitivity));
+    toml::table keys;
+    for (const auto& [id, value] : o.keys) keys.insert(id, value);
+    t.insert("keys", keys);
 }
 
 }  // namespace
@@ -103,12 +92,13 @@ const app::GameInfo app::kGame = {
     .missing = L"Put the game in the assets folder: its disc image (.iso), or default.xbe with GlobData.bin and the "
                L"chars, data, export, language, levels, sound and videos folders beside it.",
     .images = {{"default.xbe", "Black"}},
-    .options = {{"skip_intros", &game::Opt().skip_intros, nullptr}, {"fps_counter", &game::Opt().fps_counter, nullptr}},
-    .load = nullptr,
-    .save = nullptr,
-    .init = nullptr,
+    .options = {{"skip_intros", &game::Opt().skip_intros, nullptr}, {"fps_counter", &game::Opt().fps_counter, nullptr},
+                {"invert_mouse", &game::Opt().invert_mouse, nullptr}},
+    .load = game::Load,
+    .save = game::Save,
+    .init = input::LoadBindings,
     .loaded = nullptr,
-    .window = nullptr,
+    .window = input::StartMouse,
     .message = game::Message,
     .ui = app::DrawUi,
     .pad = game::Pad,

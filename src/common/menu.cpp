@@ -1,6 +1,8 @@
 // the options panel on F10
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <iterator>
 #include <string>
@@ -18,6 +20,7 @@
 
 #include "app/app.h"
 #include "common/menu.h"
+#include "common/mouse_keyboard.h"
 #include "common/options.h"
 
 namespace app {
@@ -35,7 +38,7 @@ constexpr ImVec4 kDim{0.62f, 0.59f, 0.55f, 1.0f};
 
 constexpr uint32_t kAnisoValues[] = {0, 2, 4, 8, 16};
 const char* const kAnisoNames[] = {"GAME DEFAULT", "2x", "4x", "8x", "16x"};
-constexpr uint32_t kFpsCaps[] = {0, 30, 60, 75, 90, 120, 144, 165, 240, 360};
+constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, 0};
 
 int StepIndex(int index, int step, int count) {
     if (count <= 0) return 0;
@@ -123,36 +126,57 @@ int OptionRow(const char* label, const char* value) {
 
 const char* OnOff(bool on) { return on ? "ON" : "OFF"; }
 
+void Flip(bool& on, int step) {
+    if (step) on = !on;
+}
+
 // applies and saves
 void Changed(bool display) {
     if (display) ApplyDisplay();
     Save();
 }
 
-enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kSkipIntros };
+enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kSkipIntros, kSensitivity, kInvertMouse };
 
+enum class Kind { Heading, Value, Bind };
 struct Row {
-    int id;  // -1 is a heading
+    Kind kind;
+    int id;  // a bind row's input action
     const char* label;
 };
 
-constexpr Row kRows[] = {
-    {-1, "DISPLAY"},
-    {kDisplayMode, "DISPLAY MODE"},
-    {kResolution, "RESOLUTION"},
-    {kRenderResolution, "RENDER RESOLUTION"},
-    {kMaxFps, "MAX FRAME RATE"},
-    {kVsync, "VSYNC"},
-    {kFpsCounter, "FPS COUNTER"},
-    {-1, "GRAPHICS"},
-    {kAniso, "ANISOTROPIC FILTERING"},
-    {-1, "GAME"},
-    {kSkipIntros, "SKIP INTROS"},
+constexpr Row kSettingsRows[] = {
+    {Kind::Heading, -1, "DISPLAY"},
+    {Kind::Value, kDisplayMode, "DISPLAY MODE"},
+    {Kind::Value, kResolution, "RESOLUTION"},
+    {Kind::Value, kRenderResolution, "RENDER RESOLUTION"},
+    {Kind::Value, kVsync, "VERTICAL SYNC"},
+    {Kind::Value, kMaxFps, "MAX FRAME RATE"},
+    {Kind::Value, kFpsCounter, "FPS COUNTER"},
+    {Kind::Heading, -1, "GRAPHICS"},
+    {Kind::Value, kAniso, "ANISOTROPIC FILTERING"},
+    {Kind::Heading, -1, "GENERAL"},
+    {Kind::Value, kSkipIntros, "SKIP INTROS"},
 };
+
+const std::vector<Row>& InputRows() {
+    static const std::vector<Row> list = [] {
+        std::vector<Row> out = {{Kind::Heading, -1, "MOUSE"},
+                                {Kind::Value, kSensitivity, "MOUSE SENSITIVITY"},
+                                {Kind::Value, kInvertMouse, "INVERT MOUSE"},
+                                {Kind::Heading, -1, "KEYBOARD"}};
+        size_t count = 0;
+        const input::Action* actions = input::Actions(&count);
+        for (size_t i = 0; i < count; i++) out.push_back({Kind::Bind, int(i), actions[i].label});
+        return out;
+    }();
+    return list;
+}
 
 // steps the value first when step is not zero
 std::string RowText(int id, int step) {
     Settings& s = Get();
+    game::Options& o = game::Opt();
     char text[64] = "";
     bool display = false;
     switch (id) {
@@ -165,21 +189,24 @@ std::string RowText(int id, int step) {
         }
         case kResolution: {
             static const std::vector<Mode> modes = Modes();
+            Mode desktop = Desktop(), m = s.width && s.height ? Mode{s.width, s.height} : desktop;
             int i = 0;
-            for (size_t k = 0; k < modes.size() && !i; k++)
-                if (modes[k].width == s.width && modes[k].height == s.height) i = int(k) + 1;
-            if (step) {
-                i = StepIndex(i, step, int(modes.size()) + 1);
-                s.width = i ? modes[size_t(i - 1)].width : 0;
-                s.height = i ? modes[size_t(i - 1)].height : 0;
+            for (size_t k = 0; k < modes.size(); k++)
+                if (modes[k].width == m.width && modes[k].height == m.height) i = int(k);
+            if (step && !modes.empty()) {
+                m = modes[size_t(StepIndex(i, step, int(modes.size())))];
+                // the desktop's own mode is kept as 0, which follows the desktop
+                bool native = m.width == desktop.width && m.height == desktop.height;
+                s.width = native ? 0 : m.width;
+                s.height = native ? 0 : m.height;
             }
             display = true;
-            Mode m = i ? modes[size_t(i - 1)] : Desktop();
-            std::snprintf(text, sizeof(text), i ? "%ux%u" : "DESKTOP (%ux%u)", m.width, m.height);
+            std::snprintf(text, sizeof(text), "%ux%u", m.width, m.height);
             break;
         }
         case kRenderResolution: {
-            if (step) s.render_percent = uint32_t(std::clamp(int(s.render_percent) + step * 5, 20, 200));
+            // 20% to 200% in steps of 5
+            if (step) s.render_percent = 20 + 5 * uint32_t(StepIndex((std::clamp(int(s.render_percent), 20, 200) - 20) / 5, step, 37));
             Mode out = Output();
             std::snprintf(text, sizeof(text), "%u%% (%ux%u)", s.render_percent, out.width * s.render_percent / 100,
                           out.height * s.render_percent / 100);
@@ -192,23 +219,122 @@ std::string RowText(int id, int step) {
             break;
         }
         case kVsync:
-            if (step) s.vsync = !s.vsync;
+            Flip(s.vsync, step);
             std::snprintf(text, sizeof(text), "%s", OnOff(s.vsync));
             break;
         case kFpsCounter:
-            if (step) game::Opt().fps_counter = !game::Opt().fps_counter;
-            std::snprintf(text, sizeof(text), "%s", OnOff(game::Opt().fps_counter));
+            Flip(o.fps_counter, step);
+            std::snprintf(text, sizeof(text), "%s", OnOff(o.fps_counter));
             break;
         case kAniso:
             std::snprintf(text, sizeof(text), "%s", kAnisoNames[StepTable(kAnisoValues, s.aniso, step)]);
             break;
         case kSkipIntros:
-            if (step) game::Opt().skip_intros = !game::Opt().skip_intros;
-            std::snprintf(text, sizeof(text), "%s", OnOff(game::Opt().skip_intros));
+            Flip(o.skip_intros, step);
+            std::snprintf(text, sizeof(text), "%s", OnOff(o.skip_intros));
+            break;
+        case kSensitivity:
+            // 0.1 to 5.0 in steps of 0.1
+            if (step) {
+                int i = std::clamp(int(std::lround(o.mouse_sensitivity * 10.0f)), 1, 50) - 1;
+                o.mouse_sensitivity = float(StepIndex(i, step, 50) + 1) / 10.0f;
+            }
+            std::snprintf(text, sizeof(text), "%.1f", o.mouse_sensitivity);
+            break;
+        case kInvertMouse:
+            Flip(o.invert_mouse, step);
+            std::snprintf(text, sizeof(text), "%s", OnOff(o.invert_mouse));
             break;
     }
     if (step) Changed(display);
     return text;
+}
+
+std::string KeyText(std::string keys) {
+    if (keys.empty()) return "UNBOUND";
+    for (char& c : keys) c = c == ',' ? '/' : char(std::toupper(uint8_t(c)));
+    return keys;
+}
+
+void RestoreDefaults(int page) {
+    game::Options& o = game::Opt();
+    if (page == 1) {
+        o.mouse_sensitivity = game::Options{}.mouse_sensitivity;
+        o.invert_mouse = false;
+        input::ResetBindings();
+        return;
+    }
+    game::Options keep = o;
+    Get() = Settings{};
+    o = game::Options{};
+    o.mouse_sensitivity = keep.mouse_sensitivity;
+    o.invert_mouse = keep.invert_mouse;
+    o.keys = keep.keys;
+    Changed(true);
+}
+
+// the row being rebound, -1 when idle; its keys must be released before the next press binds
+std::atomic<int> g_capture{-1};
+bool g_capture_armed = false;
+int g_capture_done = 0;  // frame of the last bind, the key that bound must not start another
+int g_page = 0;
+const char* const kPages[] = {"RECOMP SETTINGS", "MOUSE AND KEYBOARD"};
+
+// label left, keys right; Enter or a click starts the capture
+bool BindRow(const char* label, const std::string& keys, bool capturing) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    float em = ImGui::GetFontSize(), row_w = ImGui::GetContentRegionAvail().x, row_h = ImGui::GetFrameHeight();
+    float value_w = em * 12, block_w = row_h * 2 + value_w + style.ItemSpacing.x * 2;
+    float row_x = ImGui::GetCursorPosX(), row_y = ImGui::GetCursorPosY();
+    ImGui::PushID(label);
+    bool pressed = ImGui::Selectable("##row", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(row_w, row_h));
+    if (ImGui::IsItemFocused() || capturing)
+        ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_Header));
+    ImGui::SetCursorPos(ImVec2(row_x + style.ItemInnerSpacing.x, row_y));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    std::string value = capturing ? std::string("PRESS A KEY") : keys;
+    float value_x = row_x + row_w - block_w + row_h + style.ItemSpacing.x;
+    ImGui::SetCursorPos(ImVec2(value_x + std::max((value_w - ImGui::CalcTextSize(value.c_str()).x) * 0.5f, 0.0f), row_y));
+    ImGui::AlignTextToFramePadding();
+    if (capturing) ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+    ImGui::TextUnformatted(value.c_str());
+    if (capturing) ImGui::PopStyleColor();
+    ImGui::PopID();
+    ImGui::SetCursorPos(ImVec2(row_x, row_y));
+    ImGui::Dummy(ImVec2(row_w, row_h));
+    return pressed;
+}
+
+// Escape cancels, any other bindable key or mouse button binds
+void PollCapture() {
+    if (g_capture < 0) return;
+    int vk = input::PressedKey();
+    if (!g_capture_armed) {
+        g_capture_armed = !vk;
+        return;
+    }
+    if (!vk) return;
+    if (vk != VK_ESCAPE) input::Bind(size_t(g_capture.load()), vk);
+    g_capture = -1;
+    g_capture_done = ImGui::GetFrameCount();
+}
+
+void DrawRows(int page) {
+    const Row* list = page == 1 ? InputRows().data() : kSettingsRows;
+    size_t count = page == 1 ? InputRows().size() : std::size(kSettingsRows);
+    for (size_t i = 0; i < count; i++) {
+        const Row& r = list[i];
+        if (r.kind == Kind::Heading) {
+            Section(r.label);
+        } else if (r.kind == Kind::Value) {
+            if (int step = OptionRow(r.label, RowText(r.id, 0).c_str())) RowText(r.id, step);
+        } else if (BindRow(r.label, KeyText(input::Binding(size_t(r.id))), g_capture == r.id) && g_capture < 0 &&
+                   ImGui::GetFrameCount() > g_capture_done + 1) {
+            g_capture = r.id;
+            g_capture_armed = false;
+        }
+    }
 }
 
 void DrawPanel() {
@@ -233,25 +359,26 @@ void DrawPanel() {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max((ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(title).x) * 0.5f, 0.0f));
         ImGui::TextUnformatted(title);
         ImGui::Separator();
+        if (int step = OptionRow("PAGE", kPages[g_page])) {
+            g_page = StepIndex(g_page, step, int(std::size(kPages)));
+            g_capture = -1;
+        }
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
-        for (const Row& r : kRows) {
-            if (r.id < 0) Section(r.label);
-            else if (int step = OptionRow(r.label, RowText(r.id, 0).c_str())) RowText(r.id, step);
-        }
+        DrawRows(g_page);
         ImGui::EndChild();
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-        ImGui::TextUnformatted("Up and Down select, Left and Right change, Escape closes");
+        ImGui::TextUnformatted(g_capture >= 0 ? "Press a key or mouse button to bind, Escape cancels"
+                                              : "Up and Down select, Left and Right change, Enter rebinds, Escape closes");
         ImGui::PopStyleColor();
         float bw = em * 8;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(ImGui::GetContentRegionAvail().x - bw * 3 - ImGui::GetStyle().ItemSpacing.x * 2, 0.0f));
         if (ImGui::Button("Back", ImVec2(bw, 0))) ToggleMenu();
         ImGui::SameLine();
         if (ImGui::Button("Defaults", ImVec2(bw, 0))) {
-            Get() = Settings{};
-            game::Opt() = game::Options{};
-            Changed(true);
+            g_capture = -1;
+            RestoreDefaults(g_page);
         }
         ImGui::SameLine();
         if (ImGui::Button("Apply", ImVec2(bw, 0))) Changed(true);
@@ -275,7 +402,14 @@ void DrawFps(double fps) {
 
 bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }
 
-void ToggleMenu() { g_open.store(!MenuOpen(), std::memory_order_relaxed); }
+bool Capturing() { return g_capture >= 0; }
+
+void ToggleMenu() {
+    bool open = !MenuOpen();
+    g_open.store(open, std::memory_order_relaxed);
+    g_capture = -1;
+    if (open) input::ReleaseCursor();
+}
 
 void DrawUi(double fps) {
     ImGuiIO& io = ImGui::GetIO();
@@ -284,7 +418,10 @@ void DrawUi(double fps) {
     // scale the font with the output height
     io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 720.0f);
     if (game::Opt().fps_counter) DrawFps(fps);
-    if (MenuOpen()) DrawPanel();
+    if (MenuOpen()) {
+        PollCapture();
+        DrawPanel();
+    }
 }
 
 }  // namespace app
