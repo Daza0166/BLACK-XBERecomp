@@ -30,6 +30,7 @@ HLE_STDCALL(DirectSoundCreateStream, 2) {
     v.context = R32(desc + 16);
     MixBins(v, R32(desc + 20));
     v.is3d = flags & 0x10;
+    v.headroom = DefaultHeadroom(flags);
     W32(a[1], obj);
     return 0;
 }
@@ -124,7 +125,10 @@ STREAM(SetFrequency, 2) {
     return 0;
 }
 STREAM(SetFilter, 2) { return 0; }
-STREAM(SetHeadroom, 2) { return 0; }
+STREAM(SetHeadroom, 2) {
+    v.headroom = Db(-int32_t(a[1]));
+    return 0;
+}
 STREAM(SetMixBinVolumes, 2) {
     MixBins(v, a[1]);
     return 0;

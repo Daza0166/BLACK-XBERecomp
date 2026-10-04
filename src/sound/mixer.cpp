@@ -64,8 +64,8 @@ void Complete(Voice& v, Packet& pk, uint32_t status) {
 }
 
 void Levels(Voice& v, float& l, float& r) {
-    l = v.gain_l * v.volume;
-    r = v.gain_r * v.volume;
+    l = v.gain_l * v.volume * v.headroom;
+    r = v.gain_r * v.volume * v.headroom;
     if (!v.is3d || v.mode == 2) return;
     bool rel = v.mode == 1;  // the position is already in listener space
     float d[3] = {v.p[0], v.p[1], v.p[2]};
@@ -206,5 +206,8 @@ void MixBins(Voice& v, uint32_t mixbins) {
     v.gain_l = l;
     v.gain_r = r;
 }
+
+// 600 mB unless 3D or a mix in or effect in buffer
+float DefaultHeadroom(uint32_t flags) { return flags & 0x382010 ? 1.0f : Db(-600); }
 
 }  // namespace sound

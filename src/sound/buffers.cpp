@@ -15,6 +15,7 @@ static uint32_t NewBuffer(uint32_t desc, uint32_t out) {
     ReadFormat(v, R32(desc + 12));
     MixBins(v, R32(desc + 16));
     v.is3d = flags & 0x10;
+    v.headroom = DefaultHeadroom(flags);
     if (bytes) {
         v.data = mem::AllocContiguous(bytes, 0, 0xFFFFFFFF, 4);
         v.bytes = v.play_len = v.loop_len = bytes;
@@ -119,7 +120,10 @@ BUFFER(SetFrequency, 2) {
     return 0;
 }
 BUFFER(SetFilter, 2) { return 0; }
-BUFFER(SetHeadroom, 2) { return 0; }
+BUFFER(SetHeadroom, 2) {
+    v.headroom = Db(-int32_t(a[1]));
+    return 0;
+}
 BUFFER(SetMixBinVolumes, 2) {
     MixBins(v, a[1]);
     return 0;
