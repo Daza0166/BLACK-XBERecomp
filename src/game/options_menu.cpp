@@ -1,6 +1,7 @@
-// Recomp settings in the game's own options menu: RECOMP SETTINGS and MOUSE AND KEYBOARD buttons under the stock ones
-// load the page again with the F10 panel's rows in their place. A row is two copies of a stock button clip, its name and its value; the
-// name's copy stands in for the script's button object, so the script moves the focus and the cursor works.
+// Recomp settings in the game's own options menus: RECOMP SETTINGS and MOUSE AND KEYBOARD buttons under the stock ones
+// load the page again with the F10 panel's rows in their place. A row is two copies of a stock button clip, its name
+// and its value; the name's copy stands in for the script's button object, so the script moves the focus and the
+// cursor works. The pause menu's options have room for one button, its rows start with the panel's PAGE row.
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -16,6 +17,7 @@
 #include "xdk/hle.h"
 
 using namespace kernel;
+using app::rows::Row;
 using flash::Find;
 using flash::Member;
 using flash::Members;
@@ -28,13 +30,34 @@ constexpr uint32_t kNewString = 0xF5600;    // cdecl (text): a string value
 constexpr uint32_t kCall = 0x101420;        // eax object path; cdecl (function, result, count, texts...)
 constexpr uint32_t kCallValues = 0x101260;  // the same, its arguments values
 constexpr uint32_t kRunActions = 0x10F180;  // (player): the frame actions waiting, a new clip's stop() among them
-constexpr char kPage[] = "OptionsMenuXbox";
-constexpr char kButton[] = "_level4.Main.TextAnim.ControllerSetup_Text";
 const char* const kCaptions[] = {"RECOMP SETTINGS", "MOUSE AND KEYBOARD"};
 constexpr int kEntries = int(std::size(kCaptions)), kSlots = 8, kDepth = 100;
-// from the stock first button: rows 25 apart, names left of it and values right, a little smaller to fit
-constexpr float kPitch = 25.0f, kNameX = -37.0f, kValueX = 185.0f, kScale = 0.9f;
 constexpr int kEscape = 0x1B;
+const Row kPageRow{app::rows::Kind::Value, -1, "PAGE"};
+
+// an options page of the game
+struct Host {
+    const char* page;
+    const char* holder;        // the clip in Main its buttons are in, null for Main
+    const char* button;        // a stock button, copied for ours
+    const char* under;         // the clip our buttons go under, the first this far down
+    float drop;
+    const char* first, *last;  // the first and last button objects of its ring
+    int entries;               // our buttons; one opens both pages
+    float pitch, name_x, value_x, scale;  // the rows, from the stock button
+    const char* hint;          // the string of a prompt our button takes the place of
+    const char* stock[14];     // what the rows take the place of
+};
+constexpr Host kHosts[] = {
+    {"OptionsMenuXbox", "TextAnim", "_level4.Main.TextAnim.ControllerSetup_Text", "Playerprofile_Text", 25.0f,
+     "controllerButton", "Playerprofile", 2, 25.0f, -37.0f, 185.0f, 0.9f, nullptr,
+     {"ControllerSetup_Text", "SoundSetup_Text", "PictureSetup_Text", "Playerprofile_Text"}},
+    {"PauseMenuOptionXbox", nullptr, "_level4.Main.ToggleCrouch", "ToggleCrouch", 222.0f,
+     "toggleCrouchButton", "musicVolumeButton", 1, 27.0f, 0.0f, 245.0f, 1.0f, "$FE_SELECT",
+     {"ToggleCrouch", "ToggleCrouchOn_Text", "ToggleCrouchOff_Text", "InvertLook", "InvertLookOn_Text",
+      "InvertLookOff_Text", "Vibration", "VibrationOn_Text", "VibrationOff_Text", "SFXVolume", "Sound_Volume",
+      "MusicVolume", "Music_Volume"}},
+};
 
 // a text the page shows from here: its string id, the text, the data of the field showing it
 struct Field {
@@ -45,12 +68,13 @@ constexpr uint32_t kFieldSize = 64;
 Field g_fields[kFields];
 
 struct Page {
+    const Host* host = nullptr;
     int mode = -1;  // 0 the stock buttons and ours, from 1 the rows of kCaptions[mode - 1]
     bool failed = false;
-    uint32_t first = 0, fade = 0;  // our first clip, the stock clip ours come up with
+    uint32_t first = 0, lead = 0;  // our first clip, the stock clip ours keep their places from
     uint32_t entry[kEntries] = {}, name[kSlots] = {}, value[kSlots] = {};
     size_t slots = 0, top = 0;
-    std::vector<const app::rows::Row*> rows;  // null restores the defaults
+    std::vector<const Row*> rows;  // null restores the defaults
     int capture = 0;  // a key binding: 1 the keys come up, 2 the next key binds or Escape leaves, 3 they come up again
     size_t bind = 0;  // its row
 };
@@ -129,33 +153,54 @@ void Write(Field& f, const std::string& text) {
 }
 
 // a copy of the stock button beside it, stopped: data +0x1C bit 25 playing
-uint32_t Copy(X86Context& ctx, uint32_t parent, const char* name, int depth) {
+uint32_t Copy(X86Context& ctx, uint32_t holder, const char* name, int depth) {
     char number[12];
     std::snprintf(number, sizeof(number), "%d", depth);
-    ctx.eax = Text(kButton);
+    ctx.eax = Text(g_page.host->button);
     CallGuest(ctx, kCall, {Text("duplicateMovieClip"), 0, 2, Text(name), Text(number)});
-    uint32_t clip = Member(ctx, parent, name);
+    uint32_t clip = Member(ctx, holder, name);
     if (flash::Type(clip) != 0xD) return 0;
     uint32_t data = R32(clip + 0x48);
     W32(data + 0x1C, R32(data + 0x1C) & ~0x2000000u);
     return clip;
 }
 
-void Place(uint32_t clip, float x, float y) {
-    G<float>(clip + 0x1C) = x;
-    G<float>(clip + 0x20) = y;
+// +0x58 bit 20 shown
+void Hide(uint32_t clip) {
+    if (flash::IsClip(clip)) W32(clip + 0x58, R32(clip + 0x58) & ~0x100000u);
 }
 
-// the methods of a script object's class
-uint32_t Methods(X86Context& ctx, uint32_t object) {
-    uint32_t members = Members(ctx, object);
-    return members ? Members(ctx, R32(members + 8)) : 0;
+// ours keep their places from a stock clip, which the page slides and fades in: +0x1C x, y, then its colours
+void Follow(const Page& p) {
+    const Host& h = *p.host;
+    auto follow = [&p](uint32_t clip, float x, float y) {
+        if (!clip) return;
+        G<float>(clip + 0x1C) = G<float>(p.lead + 0x1C) + x;
+        G<float>(clip + 0x20) = G<float>(p.lead + 0x20) + y;
+        std::memcpy(HostPtr(clip + 0x24), HostPtr(p.lead + 0x24), 0x20);
+    };
+    for (int i = 0; i < kEntries; i++) follow(p.entry[i], 0.0f, h.drop + h.pitch * float(i));
+    for (int i = 0; i < kSlots; i++) {
+        follow(p.name[i], h.name_x, h.pitch * float(i));
+        follow(p.value[i], h.value_x, h.pitch * float(i));
+    }
+}
+
+// a method of a script object's class or of one that extends: members +8 the class
+uint32_t Method(X86Context& ctx, uint32_t object, const char* name) {
+    for (int up = 0; up < 4; up++) {
+        uint32_t members = Members(ctx, object);
+        if (!members) break;
+        object = R32(members + 8);
+        if (uint32_t found = Find(Members(ctx, object), name)) return found;
+    }
+    return 0;
 }
 
 // a clip the page's script takes for one of its button objects, such as like
 bool Button(X86Context& ctx, uint32_t clip, uint32_t like) {
-    uint32_t methods = Methods(ctx, like), frame = Member(ctx, like, "HighlightFrame");
-    uint32_t on = Find(methods, "HighLight"), off = Find(methods, "UnHighLight");
+    uint32_t frame = Member(ctx, like, "HighlightFrame"), on = Method(ctx, like, "HighLight");
+    uint32_t off = Method(ctx, like, "UnHighLight");
     return frame && on && off && Set(ctx, clip, "movieClip", clip) && Set(ctx, clip, "HighlightFrame", frame) &&
            Set(ctx, clip, "HighLight", on) && Set(ctx, clip, "UnHighLight", off);
 }
@@ -176,104 +221,120 @@ void Sound(X86Context& ctx) {
 }
 
 // our buttons under the stock ones, in their ring
-bool Entries(X86Context& ctx, uint32_t root, uint32_t anim) {
+bool Entries(X86Context& ctx, uint32_t root, uint32_t holder) {
     Page& p = g_page;
-    uint32_t top = Member(ctx, root, "controllerButton"), above = Member(ctx, root, "Playerprofile");
-    p.fade = Member(ctx, anim, "Playerprofile_Text");
-    if (!top || !above || !flash::IsClip(p.fade)) return false;
-    for (int i = 0; i < kEntries; i++) {
+    const Host& h = *p.host;
+    uint32_t top = Member(ctx, root, h.first), above = Member(ctx, root, h.last);
+    p.lead = Member(ctx, holder, h.under);
+    if (!top || !above || !flash::IsClip(p.lead)) return false;
+    for (int i = 0; i < h.entries; i++) {
         char name[16];
         std::snprintf(name, sizeof(name), "RC_E%d", i);
-        if (!(p.entry[i] = Copy(ctx, anim, name, kDepth + i))) return false;
-        Place(p.entry[i], G<float>(p.fade + 0x1C), G<float>(p.fade + 0x20) + kPitch * float(i + 1));
+        if (!(p.entry[i] = Copy(ctx, holder, name, kDepth + i))) return false;
         if (!Show(ctx, kEntry + i, p.entry[i], nullptr, kCaptions[i])) return false;
     }
     p.first = p.entry[0];
+    Follow(p);
     CallGuest(ctx, kRunActions, {R32(flash::kPlayer)});
-    for (uint32_t clip : p.entry) {
-        if (!Button(ctx, clip, top) || !Set(ctx, clip, "actionSelectPage", String(ctx, kPage))) return false;
-        Link(ctx, above, clip);
-        above = clip;
+    for (int i = 0; i < h.entries; i++) {
+        if (!Button(ctx, p.entry[i], top) || !Set(ctx, p.entry[i], "actionSelectPage", String(ctx, h.page))) return false;
+        Link(ctx, above, p.entry[i]);
+        above = p.entry[i];
     }
     Link(ctx, above, top);
+    if (h.hint)
+        for (uint32_t clip = FindField(holder, h.hint); clip; clip = R32(clip + 0x44))
+            if (R32(clip + 0x44) == holder) Hide(clip);
     return true;
 }
 
-// the panel's rows in place of the stock buttons
-bool Rows(X86Context& ctx, uint32_t root, uint32_t anim, uint32_t menu) {
-    Page& p = g_page;
-    uint32_t like = Member(ctx, root, "controllerButton"), nothing = Find(Methods(ctx, like), "Select");
-    p.fade = Member(ctx, anim, "ControllerSetup_Text");
-    if (!nothing || !flash::IsClip(p.fade)) return false;
+// the rows of the page's mode, behind the PAGE row where one button opens both
+void Fill(Page& p) {
+    p.rows.clear();
+    if (p.host->entries == 1) p.rows.push_back(&kPageRow);
     size_t count = 0;
-    const app::rows::Row* list = app::rows::Page(p.mode - 1, &count);
+    const Row* list = app::rows::Page(p.mode - 1, &count);
     for (size_t i = 0; i < count; i++)
         if (list[i].kind != app::rows::Kind::Heading) p.rows.push_back(&list[i]);
     if (p.mode > 1) p.rows.push_back(nullptr);
-    p.slots = std::min(p.rows.size(), size_t(kSlots));
-    float x = G<float>(p.fade + 0x1C), y = G<float>(p.fade + 0x20);
+    p.slots = std::min(p.slots, p.rows.size());
+    p.top = 0;
+}
+
+// the panel's rows in place of the stock buttons
+bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
+    Page& p = g_page;
+    const Host& h = *p.host;
+    uint32_t like = Member(ctx, root, h.first), nothing = Method(ctx, like, "Select");
+    p.lead = Member(ctx, holder, std::strrchr(h.button, '.') + 1);
+    if (!nothing || !flash::IsClip(p.lead)) return false;
+    p.slots = kSlots;
+    Fill(p);
     for (size_t i = 0; i < p.slots; i++) {
         char name[16];
         std::snprintf(name, sizeof(name), "RC_N%d", int(i));
-        p.name[i] = Copy(ctx, anim, name, kDepth + int(i));
+        p.name[i] = Copy(ctx, holder, name, kDepth + int(i));
         name[3] = 'V';
-        p.value[i] = Copy(ctx, anim, name, kDepth + kSlots + int(i));
+        p.value[i] = Copy(ctx, holder, name, kDepth + kSlots + int(i));
         if (!p.name[i] || !p.value[i]) return false;
-        Place(p.name[i], x + kNameX, y + kPitch * float(i));
-        Place(p.value[i], x + kValueX, y + kPitch * float(i));
-        for (uint32_t clip : {p.name[i], p.value[i]}) G<float>(clip + 0xC) = G<float>(clip + 0x18) = kScale;
+        for (uint32_t clip : {p.name[i], p.value[i]}) G<float>(clip + 0xC) = G<float>(clip + 0x18) = h.scale;
         if (!Show(ctx, kName + int(i), p.name[i]) || !Show(ctx, kValue + int(i), p.value[i])) return false;
     }
     p.first = p.name[0];
+    Follow(p);
     CallGuest(ctx, kRunActions, {R32(flash::kPlayer)});
     for (size_t i = 0; i < p.slots; i++) {
         // a confirm on a button with no action is a back
         if (!Button(ctx, p.name[i], like) || !Set(ctx, p.name[i], "actionSelectFunction", nothing)) return false;
         if (i) Link(ctx, p.name[i - 1], p.name[i]);
     }
-    for (const char* stock : {"ControllerSetup_Text", "SoundSetup_Text", "PictureSetup_Text", "Playerprofile_Text"})
-        if (uint32_t clip = Member(ctx, anim, stock); flash::IsClip(clip)) W32(clip + 0x58, R32(clip + 0x58) & ~0x100000u);
-    Show(ctx, kTitle, anim, "$FE_OPTIONS", kCaptions[p.mode - 1]);
-    // back is the options page, not its save and leave
+    for (const char* stock : h.stock)
+        if (stock) Hide(Member(ctx, holder, stock));
+    Show(ctx, kTitle, holder, "$FE_OPTIONS");
+    // back is the options page, not its own back
     Set(ctx, menu, "mfuncFunctionBack", 0);
-    Set(ctx, menu, "mstrPageBack", String(ctx, kPage));
+    Set(ctx, menu, "mstrPageBack", String(ctx, h.page));
     Focus(ctx, p.name[0]);
     return true;
 }
 
 // front end: +0x44C the menu input of this tick, 1 to 6 up down left right confirm back, +0x454 input on, +0x455 held
-// off, +0x381C 2 once the page is ready, +0x3840 its name, +0x3884 another page asked for, +0x388C page leaving
+// off, +0x381C 2 once the page is ready, +0x3840 its name, +0x3884 another page asked for, +0x388C page leaving, 1 as
+// it goes
 void Tick(X86Context& ctx, uint32_t ui) {
     Page& p = g_page;
     const char* name = static_cast<const char*>(HostPtr(ui + 0x3840));
-    bool up = R32(kPlayerReady) == 1 && R32(flash::kPlayer) && R32(ui + 0x381C) == 2 && std::strcmp(name, kPage) == 0;
-    if (!up || R32(ui + 0x3884) == 1 || R32(ui + 0x388C)) {
-        if (*name && std::strcmp(name, kPage) != 0) g_next = g_last = 0;
-        p.mode = -1;
-        p.failed = false;
+    const Host* host = std::find_if(std::begin(kHosts), std::end(kHosts), [name](const Host& h) { return std::strcmp(name, h.page) == 0; });
+    if (host == std::end(kHosts) || R32(kPlayerReady) != 1 || !R32(flash::kPlayer) || R32(ui + 0x381C) != 2) {
+        if (*name && host == std::end(kHosts)) g_next = g_last = 0;
+        p = {};
         return;
     }
-    uint32_t root = flash::Level(4), anim = Member(ctx, Member(ctx, root, "Main"), "TextAnim");
-    uint32_t menu = Member(ctx, root, "MyMenu");
-    if (!anim || !menu || p.failed) return;
-    if (p.mode < 0 || Member(ctx, anim, p.mode ? "RC_N0" : "RC_E0") != p.first) {
+    uint32_t going = R32(ui + 0x388C);
+    bool leaving = going || R32(ui + 0x3884) == 1;
+    uint32_t root = flash::Level(4), holder = Member(ctx, root, "Main"), menu = Member(ctx, root, "MyMenu");
+    if (host->holder) holder = Member(ctx, holder, host->holder);
+    if (!holder || !menu) return;
+    if (p.failed) {
+        if (going == 1) p = {};
+        return;
+    }
+    if (p.mode < 0 || Member(ctx, holder, p.mode ? "RC_N0" : "RC_E0") != p.first) {
+        if (leaving) return;
         p = {};
         for (Field& f : g_fields) f.data = 0;
+        p.host = host;
         p.mode = g_next;
         g_next = 0;
-        p.failed = !(p.mode ? Rows(ctx, root, anim, menu) : Entries(ctx, root, anim));
-        LOGI("options menu: %s%s", p.mode ? kCaptions[p.mode - 1] : "buttons", p.failed ? " failed" : "");
-        if (!p.failed && !p.mode && g_last) Focus(ctx, p.entry[g_last - 1]);
+        p.failed = !(p.mode ? Rows(ctx, root, holder, menu) : Entries(ctx, root, holder));
+        LOGI("options menu: %s, %s%s", host->page, p.mode ? kCaptions[p.mode - 1] : "buttons", p.failed ? ", failed" : "");
+        if (!p.failed && !p.mode && g_last) Focus(ctx, p.entry[std::min(g_last, host->entries) - 1]);
         g_last = p.mode;
         return;
     }
-    // the page brings its buttons up by their colour
-    auto fade = [&p](uint32_t clip) {
-        if (clip) std::memcpy(HostPtr(clip + 0x24), HostPtr(p.fade + 0x24), 0x20);
-    };
-    std::for_each(std::begin(p.entry), std::end(p.entry), fade);
-    std::for_each(std::begin(p.name), std::end(p.name), fade);
-    std::for_each(std::begin(p.value), std::end(p.value), fade);
+    Follow(p);
+    if (going == 1) p = {};
+    if (leaving) return;
     bool taken = G<uint8_t>(ui + 0x390F) && G<uint8_t>(ui + 0x454) && !G<uint8_t>(ui + 0x455);
     uint32_t id = taken ? R32(ui + 0x44C) : 0, focus = Member(ctx, menu, "mFocusButton");
     if (!p.mode) {
@@ -294,7 +355,7 @@ void Tick(X86Context& ctx, uint32_t ui) {
         }
         W32(ui + 0x44C, 0);
     } else if (slot < p.slots) {
-        const app::rows::Row* row = p.rows[p.top + slot];
+        const Row* row = p.rows[p.top + slot];
         // past either end the rows scroll, then go round
         bool edge = true, value = row && row->kind == app::rows::Kind::Value;
         if (id == 1 && slot == 0) {
@@ -313,7 +374,10 @@ void Tick(X86Context& ctx, uint32_t ui) {
             }
         } else {
             edge = false;
-            if (value && id >= 3 && id <= 5) {
+            if (row == &kPageRow && id >= 3 && id <= 5) {
+                p.mode = 3 - p.mode;
+                Fill(p);
+            } else if (value && id >= 3 && id <= 5) {
                 app::rows::Value(*row, id == 3 ? -1 : 1);
             } else if (id == 5 && row) {
                 p.capture = 1;
@@ -325,11 +389,12 @@ void Tick(X86Context& ctx, uint32_t ui) {
         if (edge) W32(ui + 0x44C, 0);
         if (edge || (value && (id == 3 || id == 4))) Sound(ctx);
     }
+    Write(g_fields[kTitle], kCaptions[p.mode - 1]);
     for (size_t i = 0; i < p.slots; i++) {
-        const app::rows::Row* row = p.rows[p.top + i];
+        const Row* row = p.rows[p.top + i];
         bool binding = (p.capture == 1 || p.capture == 2) && p.bind == p.top + i;
         Write(g_fields[kName + i], row ? row->label : "RESTORE DEFAULTS");
-        Write(g_fields[kValue + i], binding ? "PRESS A KEY" : row ? app::rows::Value(*row) : " ");
+        Write(g_fields[kValue + i], binding ? "PRESS A KEY" : row == &kPageRow ? kCaptions[p.mode - 1] : row ? app::rows::Value(*row) : " ");
         // a value lights up with its name: +0xC a clip's matrix, then its colours
         uint32_t from = flash::FirstChild(p.name[i]), to = flash::FirstChild(p.value[i]);
         if (from && to) std::memcpy(HostPtr(to + 0xC), HostPtr(from + 0xC), 0x38);
