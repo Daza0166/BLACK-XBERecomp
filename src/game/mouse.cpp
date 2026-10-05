@@ -29,6 +29,9 @@ void MouseLook(X86Context& ctx, uint8_t*) {
     G<float>(ctx.esi + 0x1C) += dy * scale;
 }
 
+// false with the keyboard or mouse used last: no pull of the view to a target, no shots bent to one
+bool AimAssist(X86Context&, uint8_t*) { return !input::KeyboardActive(); }
+
 namespace {
 
 // front end: +0x44C the menu input of this tick, +0x450 set while it waits for a player's Start, +0x454 input on,
