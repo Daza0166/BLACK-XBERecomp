@@ -11,6 +11,7 @@ struct Options {
     bool skip_intros = false;  // logos at boot and the film after pressing start
     bool fps_counter = false;
     bool reload_blur = true;
+    uint32_t msaa = 0;  // samples a pixel of the scene, 0 off
     uint32_t draw_distance = 1;  // times the game's LOD and draw distances
     float mouse_sensitivity = 1.0f;
     bool invert_mouse = false;
