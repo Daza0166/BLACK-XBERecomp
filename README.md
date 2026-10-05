@@ -28,6 +28,7 @@ A static recompilation of the original Xbox version of Black (2006) into a nativ
 ### Graphics
 - **MSAA** - Smooths geometry edges with 2x, 4x or 8x MSAA.
 - **Anisotropic Filtering** - Forces the selected anisotropic filtering level on all textures.
+- **Draw Distance** - Increases the level of detail and draw distances past the game's values: 2x, 4x or 8x.
 
 ### Mouse and Keyboard
 - **Keyboard Support** - Fully supports keyboard and mouse input.

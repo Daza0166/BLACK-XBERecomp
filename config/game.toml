@@ -355,6 +355,78 @@ at = 0x17B239
 call = "ReloadBlur"
 on_false = 0x17B3AA
 
+[[hook]]
+at = 0x1C5655
+call = "CharacterDetail"
+
+[[hook]]
+at = 0x1C8427
+call = "DistanceShorter"
+
+[[hook]]
+at = 0x1CA677
+call = "DistanceShorter"
+
+[[hook]]
+at = 0x1D0FB1
+call = "DistanceShorter"
+
+[[hook]]
+at = 0x1CA942
+call = "DistanceShorter"
+
+[[hook]]
+at = 0x16086D
+call = "DistanceShorter"
+
+[[hook]]
+at = 0x17DAD3
+call = "DistanceShorter"
+
+[[hook]]
+at = 0x1CA69C
+call = "LimitLonger"
+
+[[hook]]
+at = 0x1D0FD6
+call = "LimitLonger"
+
+[[hook]]
+at = 0x1CA77A
+call = "LimitLonger"
+
+[[hook]]
+at = 0x1CB465
+call = "LimitLonger"
+
+[[hook]]
+at = 0x1D12C1
+call = "LimitLonger"
+
+[[hook]]
+at = 0x16DF94
+call = "LimitLonger"
+
+[[hook]]
+at = 0x15ADA8
+call = "LimitLonger"
+
+[[hook]]
+at = 0x16A1D8
+call = "DistanceShorterSquared"
+
+[[hook]]
+at = 0x1CA65F
+call = "PropLimit"
+
+[[hook]]
+at = 0x16DFFB
+call = "ParticleFade"
+
+[[hook]]
+at = 0x160919
+call = "GroundCoverFull"
+
 # src/game/fps_counter.cpp
 [[hook]]
 at = 0x20F8BF

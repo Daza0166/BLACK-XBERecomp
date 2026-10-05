@@ -275,6 +275,35 @@ void BodyDamping(X86Context& ctx, uint8_t*) {
 }
 void BodyTopSpeed(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
 
+// LOD and draw distances reach this many times farther: each compare sees a distance that much shorter or a
+// limit that much longer. Characters, props, pickups, ground cover, particles and bullet holes
+static float Reach() { return float(std::clamp(game::Opt().draw_distance, 1u, 8u)); }
+void DistanceShorter(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] /= Reach(); }
+void DistanceShorterSquared(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] /= Reach() * Reach(); }
+void LimitLonger(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= Reach(); }
+void CharacterDetail(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] /= Reach(); }
+void PropLimit(X86Context& ctx, uint8_t*) { ctx.xmm[2].f[0] *= Reach() * Reach(); }
+// edi a particle type, xmm1 the view's scale, xmm2 its far cut under the camera's at [edx+0x88]: the fade before
+// it starts as much farther as the cut got
+void ParticleFade(X86Context& ctx, uint8_t*) {
+    float cut = std::min(G<float>(ctx.edi + 0xC4) * ctx.xmm[1].f[0], G<float>(ctx.edx + 0x88));
+    if (Reach() > 1 && cut > 0) ctx.xmm[3].f[0] *= ctx.xmm[2].f[0] / cut;
+}
+
+// ebx the ground cover, 63 patches a frame from +0x28, 16 bytes each: full, a nearer patch replaces the farthest
+void GroundCoverFull(X86Context& ctx, uint8_t*) {
+    if (ctx.eax < 63 || game::Opt().draw_distance <= 1) return;
+    uint32_t list = ctx.ebx + 0x28, last = list;
+    for (uint32_t at = list + 16; at < list + 63 * 16; at += 16)
+        if (G<float>(at + 4) > G<float>(last + 4)) last = at;
+    if (!(ctx.xmm[2].f[0] < G<float>(last + 4))) return;
+    W32(last, R32(ctx.ebp + 8));
+    G<float>(last + 4) = ctx.xmm[2].f[0];
+    G<float>(last + 8) = ctx.xmm[1].f[0];
+    G<uint8_t>(last + 0xC) = uint8_t(ctx.ecx);
+    G<uint8_t>(last + 0xD) = ctx.edx == 2;
+}
+
 // reload animations start the screen blur
 bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur; }
 

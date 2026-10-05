@@ -105,6 +105,7 @@ const app::GameInfo app::kGame = {
                 {"reload_blur", &game::Opt().reload_blur, nullptr},
                 {"invert_mouse", &game::Opt().invert_mouse, nullptr}, {"hold_aim", &game::Opt().hold_aim, nullptr},
                 {"walk_speed", nullptr, &game::Opt().walk_speed}, {"fov", nullptr, &game::Opt().fov},
+                {"draw_distance", nullptr, &game::Opt().draw_distance},
                 {"viewmodel_fov", nullptr, &game::Opt().viewmodel_fov}},
     .load = game::Load,
     .save = game::Save,

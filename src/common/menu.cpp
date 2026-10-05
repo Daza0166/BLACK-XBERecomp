@@ -38,6 +38,8 @@ constexpr ImVec4 kDim{0.62f, 0.59f, 0.55f, 1.0f};
 
 constexpr uint32_t kAnisoValues[] = {0, 2, 4, 8, 16};
 const char* const kAnisoNames[] = {"GAME DEFAULT", "2x", "4x", "8x", "16x"};
+constexpr uint32_t kDistances[] = {1, 2, 4, 8};
+const char* const kDistanceNames[] = {"GAME DEFAULT", "2x", "4x", "8x"};
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, 0};
 
 int StepIndex(int index, int step, int count) {
@@ -136,7 +138,7 @@ void Changed(bool display) {
     Save();
 }
 
-enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim };
+enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance };
 
 using rows::Kind;
 using rows::Row;
@@ -153,6 +155,7 @@ constexpr Row kSettingsRows[] = {
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
     {Kind::Heading, -1, "GRAPHICS"},
     {Kind::Value, kAniso, "ANISOTROPIC FILTERING"},
+    {Kind::Value, kDrawDistance, "DRAW DISTANCE"},
     {Kind::Value, kReloadBlur, "RELOAD BLUR"},
     {Kind::Heading, -1, "GENERAL"},
     {Kind::Value, kSkipIntros, "SKIP INTROS"},
@@ -237,6 +240,9 @@ std::string RowText(int id, int step) {
             break;
         case kAniso:
             std::snprintf(text, sizeof(text), "%s", kAnisoNames[StepTable(kAnisoValues, s.aniso, step)]);
+            break;
+        case kDrawDistance:
+            std::snprintf(text, sizeof(text), "%s", kDistanceNames[StepTable(kDistances, o.draw_distance, step)]);
             break;
         case kReloadBlur:
             Flip(o.reload_blur, step);
