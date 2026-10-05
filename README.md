@@ -34,6 +34,7 @@ A static recompilation of the original Xbox version of Black (2006) into a nativ
 - **Raw Mouse** - Native raw mouse input driven straight into the camera.
 - **Mouse Look Sensitivity** - Adjusts mouse look sensitivity.
 - **Invert Mouse Look** - Inverts the vertical look axis.
+- **Hold To Aim** - Aims down scopes while the button is held instead of toggling with a tap.
 - **Rebinding** - Every action can be rebound from the Mouse and Keyboard page.
 - **Custom Menu Cursor** - Put a `cursor.png` (or `cursor.dds`) beside the exe to replace the Windows arrow in the game's menus.
 

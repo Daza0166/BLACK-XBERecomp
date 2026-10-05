@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "common/mouse_keyboard.h"
+#include "common/options.h"
 #include "core/log.h"
 #include "game/flash.h"
 #include "xdk/hle.h"
@@ -31,6 +32,11 @@ void MouseLook(X86Context& ctx, uint8_t*) {
 
 // false with the keyboard or mouse used last: no pull of the view to a target, no shots bent to one
 bool AimAssist(X86Context&, uint8_t*) { return !input::KeyboardActive(); }
+
+// ebx the player's controller past the game's toggle aim, scopes and all: +0x45 aim wanted, +0x104 aim held
+void HoldAim(X86Context& ctx, uint8_t*) {
+    if (game::Opt().hold_aim && input::KeyboardActive()) G<uint8_t>(ctx.ebx + 0x45) = G<uint8_t>(ctx.ebx + 0x104);
+}
 
 namespace {
 

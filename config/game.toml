@@ -376,6 +376,10 @@ call = "AimAssist"
 on_false = 0x1DCE3B
 
 [[hook]]
+at = 0x1EC903
+call = "HoldAim"
+
+[[hook]]
 at = 0x124374
 call = "MenuCursor"
 
@@ -388,3 +392,8 @@ call = "MenuPrompts"
 [[hook]]
 at = 0x16D850
 call = "EndImmediate"
+
+# src/game/hud.cpp
+[[hook]]
+at = 0x2139D
+call = "HudItem"

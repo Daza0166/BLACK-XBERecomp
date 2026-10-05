@@ -136,7 +136,7 @@ void Changed(bool display) {
     Save();
 }
 
-enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov };
+enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim };
 
 enum class Kind { Heading, Value, Bind };
 struct Row {
@@ -167,6 +167,7 @@ const std::vector<Row>& InputRows() {
         std::vector<Row> out = {{Kind::Heading, -1, "MOUSE"},
                                 {Kind::Value, kSensitivity, "MOUSE SENSITIVITY"},
                                 {Kind::Value, kInvertMouse, "INVERT LOOK"},
+                                {Kind::Value, kHoldAim, "HOLD TO AIM"},
                                 {Kind::Heading, -1, "KEYBOARD"}};
         size_t count = 0;
         const input::Action* actions = input::Actions(&count);
@@ -261,6 +262,10 @@ std::string RowText(int id, int step) {
             Flip(o.invert_mouse, step);
             std::snprintf(text, sizeof(text), "%s", OnOff(o.invert_mouse));
             break;
+        case kHoldAim:
+            Flip(o.hold_aim, step);
+            std::snprintf(text, sizeof(text), "%s", OnOff(o.hold_aim));
+            break;
         case kWalkSpeed:
             // 10% to 100% in steps of 5
             if (step) o.walk_speed = 10 + 5 * uint32_t(StepIndex((std::clamp(int(o.walk_speed), 10, 100) - 10) / 5, step, 19));
@@ -282,6 +287,7 @@ void RestoreDefaults(int page) {
     if (page == 1) {
         o.mouse_sensitivity = game::Options{}.mouse_sensitivity;
         o.invert_mouse = false;
+        o.hold_aim = true;
         o.walk_speed = game::Options{}.walk_speed;
         input::ResetBindings();
         return;
@@ -291,6 +297,7 @@ void RestoreDefaults(int page) {
     o = game::Options{};
     o.mouse_sensitivity = keep.mouse_sensitivity;
     o.invert_mouse = keep.invert_mouse;
+    o.hold_aim = keep.hold_aim;
     o.walk_speed = keep.walk_speed;
     o.keys = keep.keys;
     Changed(true);
