@@ -15,6 +15,10 @@
 
 using namespace kernel;
 
+namespace game {
+uint32_t OptionsText(uint32_t id);  // options_menu.cpp
+}
+
 namespace {
 
 constexpr uint32_t kResetTexts = 0xECA90;  // every text on screen is made again from its string
@@ -93,6 +97,10 @@ X86_EXTERN_FUNC(__imp__sub_001F3A80);
 X86_FUNC(sub_001F3A80) {
     uint32_t id = R32(ctx.esp + 4);
     __imp__sub_001F3A80(ctx, base);
+    if (uint32_t text = game::OptionsText(id)) {
+        ctx.eax = text;
+        return;
+    }
     if (!ctx.eax) return;
     bool keyboard = input::KeyboardActive();
     std::lock_guard lock(g_lock);

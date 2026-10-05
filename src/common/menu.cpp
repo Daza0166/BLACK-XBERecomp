@@ -138,12 +138,8 @@ void Changed(bool display) {
 
 enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim };
 
-enum class Kind { Heading, Value, Bind };
-struct Row {
-    Kind kind;
-    int id;  // a bind row's input action
-    const char* label;
-};
+using rows::Kind;
+using rows::Row;
 
 constexpr Row kSettingsRows[] = {
     {Kind::Heading, -1, "DISPLAY"},
@@ -351,8 +347,8 @@ void PollCapture() {
 }
 
 void DrawRows(int page) {
-    const Row* list = page == 1 ? InputRows().data() : kSettingsRows;
-    size_t count = page == 1 ? InputRows().size() : std::size(kSettingsRows);
+    size_t count = 0;
+    const Row* list = rows::Page(page, &count);
     for (size_t i = 0; i < count; i++) {
         const Row& r = list[i];
         if (r.kind == Kind::Heading) {
@@ -419,6 +415,15 @@ void DrawPanel() {
 }
 
 }  // namespace
+
+const rows::Row* rows::Page(int page, size_t* count) {
+    *count = page == 1 ? InputRows().size() : std::size(kSettingsRows);
+    return page == 1 ? InputRows().data() : kSettingsRows;
+}
+
+std::string rows::Value(const Row& row, int step) {
+    return row.kind == Kind::Bind ? KeyText(input::Binding(size_t(row.id))) : RowText(row.id, step);
+}
 
 bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }
 

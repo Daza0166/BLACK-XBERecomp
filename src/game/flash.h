@@ -1,5 +1,7 @@
 #pragma once
 // The game's Flash player: the script's values and the clips on screen
+#include <string.h>
+
 #include <cstdint>
 
 #include "xdk/hle.h"
@@ -18,6 +20,26 @@ inline uint32_t Type(uint32_t value) {
 inline bool IsClip(uint32_t value) { return Type(value) >= 0xC && Type(value) <= 0x12; }
 
 inline const char* Name(uint32_t clip) { return static_cast<const char*>(kernel::HostPtr(kernel::R32(clip + 8) + 8)); }
+
+// a value's members: +0 slots, +4 {name, value} each, a name's text at +8
+inline uint32_t Members(X86Context& ctx, uint32_t value) {
+    if (!Type(value)) return 0;
+    ctx.ecx = value;
+    return kernel::CallGuest(ctx, kernel::R32(kernel::R32(value) + 0xC), {});
+}
+
+inline uint32_t Find(uint32_t members, const char* name) {
+    uint32_t slots = members ? kernel::R32(members) : 0, table = members ? kernel::R32(members + 4) : 0;
+    for (uint32_t i = 0; table && slots <= 0x1000 && i < slots; i++) {
+        uint32_t key = kernel::R32(table + i * 8), value = kernel::R32(table + i * 8 + 4);
+        // 0x2AC7EC the name of a deleted member
+        if (key && key != 0x2AC7EC && _stricmp(static_cast<const char*>(kernel::HostPtr(key + 8)), name) == 0)
+            return Type(value) ? value : 0;
+    }
+    return 0;
+}
+
+inline uint32_t Member(X86Context& ctx, uint32_t value, const char* name) { return Find(Members(ctx, value), name); }
 
 // the movie at a level, menu pages are at 4
 inline uint32_t Level(int level) {
