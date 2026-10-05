@@ -38,6 +38,10 @@ void HoldAim(X86Context& ctx, uint8_t*) {
     if (game::Opt().hold_aim && input::KeyboardActive()) G<uint8_t>(ctx.ebx + 0x45) = G<uint8_t>(ctx.ebx + 0x104);
 }
 
+namespace game {
+bool OptionsCapturing();  // options_menu.cpp
+}
+
 namespace {
 
 // front end: +0x44C the menu input of this tick, +0x450 set while it waits for a player's Start, +0x454 input on,
@@ -197,7 +201,7 @@ void Menu(X86Context& ctx, uint32_t ui) {
     int wheel = input::TakeWheel();
     float x, y;
     bool down = false;
-    bool pointer = menu && input::Cursor(x, y, down);
+    bool pointer = menu && !game::OptionsCapturing() && input::Cursor(x, y, down);
     bool click = down && !held;
     held = down;
     // waiting for a player's Start the game takes the pad that pressed: a click presses A on it

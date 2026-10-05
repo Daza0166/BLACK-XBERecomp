@@ -425,6 +425,8 @@ std::string rows::Value(const Row& row, int step) {
     return row.kind == Kind::Bind ? KeyText(input::Binding(size_t(row.id))) : RowText(row.id, step);
 }
 
+void rows::Defaults(int page) { RestoreDefaults(page); }
+
 bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }
 
 bool Capturing() { return g_capture >= 0; }

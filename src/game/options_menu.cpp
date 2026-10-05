@@ -1,5 +1,5 @@
-// Recomp settings in the game's own options menu: a RECOMP SETTINGS button under the stock ones loads the page again
-// with the F10 panel's rows in their place. A row is two copies of a stock button clip, its name and its value; the
+// Recomp settings in the game's own options menu: RECOMP SETTINGS and MOUSE AND KEYBOARD buttons under the stock ones
+// load the page again with the F10 panel's rows in their place. A row is two copies of a stock button clip, its name and its value; the
 // name's copy stands in for the script's button object, so the script moves the focus and the cursor works.
 #include <algorithm>
 #include <cstdio>
@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "common/menu.h"
+#include "common/mouse_keyboard.h"
 #include "core/log.h"
 #include "game/flash.h"
 #include "xdk/hle.h"
@@ -29,10 +30,11 @@ constexpr uint32_t kCallValues = 0x101260;  // the same, its arguments values
 constexpr uint32_t kRunActions = 0x10F180;  // (player): the frame actions waiting, a new clip's stop() among them
 constexpr char kPage[] = "OptionsMenuXbox";
 constexpr char kButton[] = "_level4.Main.TextAnim.ControllerSetup_Text";
-const char* const kCaptions[] = {"RECOMP SETTINGS"};
+const char* const kCaptions[] = {"RECOMP SETTINGS", "MOUSE AND KEYBOARD"};
 constexpr int kEntries = int(std::size(kCaptions)), kSlots = 8, kDepth = 100;
 // from the stock first button: rows 25 apart, names left of it and values right, a little smaller to fit
-constexpr float kPitch = 25.0f, kNameX = -37.0f, kValueX = 173.0f, kScale = 0.9f;
+constexpr float kPitch = 25.0f, kNameX = -37.0f, kValueX = 185.0f, kScale = 0.9f;
+constexpr int kEscape = 0x1B;
 
 // a text the page shows from here: its string id, the text, the data of the field showing it
 struct Field {
@@ -48,7 +50,9 @@ struct Page {
     uint32_t first = 0, fade = 0;  // our first clip, the stock clip ours come up with
     uint32_t entry[kEntries] = {}, name[kSlots] = {}, value[kSlots] = {};
     size_t slots = 0, top = 0;
-    std::vector<const app::rows::Row*> rows;
+    std::vector<const app::rows::Row*> rows;  // null restores the defaults
+    int capture = 0;  // a key binding: 1 the keys come up, 2 the next key binds or Escape leaves, 3 they come up again
+    size_t bind = 0;  // its row
 };
 Page g_page;     // game thread
 int g_next = 0;  // the mode of the page being loaded
@@ -205,6 +209,7 @@ bool Rows(X86Context& ctx, uint32_t root, uint32_t anim, uint32_t menu) {
     const app::rows::Row* list = app::rows::Page(p.mode - 1, &count);
     for (size_t i = 0; i < count; i++)
         if (list[i].kind != app::rows::Kind::Heading) p.rows.push_back(&list[i]);
+    if (p.mode > 1) p.rows.push_back(nullptr);
     p.slots = std::min(p.rows.size(), size_t(kSlots));
     float x = G<float>(p.fade + 0x1C), y = G<float>(p.fade + 0x20);
     for (size_t i = 0; i < p.slots; i++) {
@@ -277,9 +282,21 @@ void Tick(X86Context& ctx, uint32_t ui) {
         return;
     }
     size_t slot = size_t(std::find(p.name, p.name + p.slots, focus) - p.name), hidden = p.rows.size() - p.slots;
-    if (slot < p.slots) {
+    if (p.capture) {
+        int vk = input::PressedKey();
+        if (p.capture == 2 && vk) {
+            if (vk != kEscape) input::Bind(size_t(p.rows[p.bind]->id), vk);
+            p.capture = 3;
+        } else if (p.capture != 2 && !vk) {
+            p.capture = p.capture == 1 ? 2 : 0;
+        } else if (id == 6) {
+            p.capture = 0;  // a controller's back
+        }
+        W32(ui + 0x44C, 0);
+    } else if (slot < p.slots) {
+        const app::rows::Row* row = p.rows[p.top + slot];
         // past either end the rows scroll, then go round
-        bool edge = true;
+        bool edge = true, value = row && row->kind == app::rows::Kind::Value;
         if (id == 1 && slot == 0) {
             if (p.top) {
                 p.top--;
@@ -296,15 +313,23 @@ void Tick(X86Context& ctx, uint32_t ui) {
             }
         } else {
             edge = false;
-            if (id >= 3 && id <= 5) app::rows::Value(*p.rows[p.top + slot], id == 3 ? -1 : 1);
+            if (value && id >= 3 && id <= 5) {
+                app::rows::Value(*row, id == 3 ? -1 : 1);
+            } else if (id == 5 && row) {
+                p.capture = 1;
+                p.bind = p.top + slot;
+            } else if (id == 5) {
+                app::rows::Defaults(p.mode - 1);
+            }
         }
         if (edge) W32(ui + 0x44C, 0);
-        if (edge || id == 3 || id == 4) Sound(ctx);
+        if (edge || (value && (id == 3 || id == 4))) Sound(ctx);
     }
     for (size_t i = 0; i < p.slots; i++) {
-        const app::rows::Row& row = *p.rows[p.top + i];
-        Write(g_fields[kName + i], row.label);
-        Write(g_fields[kValue + i], app::rows::Value(row));
+        const app::rows::Row* row = p.rows[p.top + i];
+        bool binding = (p.capture == 1 || p.capture == 2) && p.bind == p.top + i;
+        Write(g_fields[kName + i], row ? row->label : "RESTORE DEFAULTS");
+        Write(g_fields[kValue + i], binding ? "PRESS A KEY" : row ? app::rows::Value(*row) : " ");
         // a value lights up with its name: +0xC a clip's matrix, then its colours
         uint32_t from = flash::FirstChild(p.name[i]), to = flash::FirstChild(p.value[i]);
         if (from && to) std::memcpy(HostPtr(to + 0xC), HostPtr(from + 0xC), 0x38);
@@ -321,6 +346,9 @@ void OptionsMenu(X86Context& ctx, uint8_t*) {
 }
 
 namespace game {
+
+// mouse.cpp: a key binding takes the next click
+bool OptionsCapturing() { return g_page.capture != 0; }
 
 // prompts.cpp's string lookup: a text of the page by its string id, 0 for none
 uint32_t OptionsText(uint32_t id) {
