@@ -11,7 +11,8 @@ using namespace kernel;
 namespace {
 
 constexpr uint32_t kVertices = 0x563120, kStride = 0x18, kCount = 0x2F3710;
-constexpr uint32_t kDisplay = 0x2D67F4;  // +0 width
+constexpr uint32_t kDisplay = 0x2D67F4;  // +0 width, +0xC widescreen, +0xD428 width, +0xD4C0 view width, +0xD4C4 aspect
+constexpr uint32_t kUi = 0x2D199C;       // +0x3710 Flash stage to screen
 constexpr uint32_t kAnchors = 0x2AD968;  // x, y share of the safe area per anchor id
 constexpr uint32_t kTaller = 0x2AD9BC;   // frame height the game gives the middle anchors on a widescreen
 constexpr uint32_t kFromHud = 0x13C02F, kFromFlash = 0x121E82, kFromHost = 0xFFFFFFF0;  // return addresses
@@ -32,12 +33,24 @@ void Squeeze() {
     g_mark = count;
 }
 
+// The game takes the screen's shape once at boot: its flag, the view and the Flash stage follow the output
+void FollowOutput() {
+    uint32_t display = R32(kDisplay), ui = R32(kUi);
+    bool wide = app::Widescreen();
+    if (!display || G<uint8_t>(display + 0xC) == uint8_t(wide)) return;
+    G<uint8_t>(display + 0xC) = wide;
+    G<float>(display + 0xD4C0) = wide ? 1.2f : 1.0f;
+    G<float>(display + 0xD4C4) = wide ? 16.0f / 9 : 4.0f / 3;
+    if (ui) G<float>(ui + 0x3710) = float(int32_t(R32(display + 0xD428))) / 640 * (wide ? 0.75f : 1.0f);
+}
+
 }  // namespace
 
 // Begin. Left alone: the Flash player's, the host's, a smaller target's
 X86_EXTERN_FUNC(__imp__sub_000D99A0);
 X86_FUNC(sub_000D99A0) {
     uint32_t from = R32(ctx.esp), display = R32(kDisplay);
+    FollowOutput();
     __imp__sub_000D99A0(ctx, base);
     std::lock_guard<std::recursive_mutex> lock(d3d::Lock());
     uint32_t width = d3d::State().viewport.w;
