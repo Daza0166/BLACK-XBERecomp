@@ -19,6 +19,7 @@
 #include <windows.h>
 
 #include "app/app.h"
+#include "common/aspect.h"
 #include "common/menu.h"
 #include "common/options.h"
 
@@ -293,8 +294,8 @@ bool Cursor(float& x, float& y, bool& down) {
     if (!Active() || !CursorShown() || !GetCursorPos(&p) || !ScreenToClient(g_hwnd, &p) || !GetClientRect(g_hwnd, &r) ||
         r.right <= 0 || r.bottom <= 0)
         return false;
-    // the frame is shown 16:9, or 4:3 on a 4:3 output, in the middle of the window
-    float aspect = app::Widescreen() ? 16.0f / 9.0f : 4.0f / 3.0f, w = float(r.right), h = float(r.bottom);
+    // the frame is shown in the middle of the window
+    float aspect = game::Aspect(), w = float(r.right), h = float(r.bottom);
     float vw = std::min(w, h * aspect), vh = vw / aspect;
     x = (float(p.x) - (w - vw) / 2) / vw;
     y = (float(p.y) - (h - vh) / 2) / vh;

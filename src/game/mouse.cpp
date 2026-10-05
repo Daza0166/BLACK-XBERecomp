@@ -50,7 +50,7 @@ namespace {
 constexpr uint32_t kDisplay = 0x2D67F4;
 constexpr uint32_t kBounds = 0xE9310;  // eax = float box[4] out, ecx = clip: its box in its parent
 constexpr uint32_t kDeletedName = 0x2AC7EC;
-constexpr float kWideOffset = 106.6667f;  // the 640 stage sits this far in on a widescreen
+constexpr uint32_t kStageX = 0x295DA4;  // float: the 640 stage sits this far in on a widescreen
 constexpr float kPad = 6.0f;  // around a value's or an arrow's clip, some are a few pixels across
 constexpr size_t kMaxNodes = 64;
 enum Input : uint32_t { None, Up, Down, Left, Right, Confirm };
@@ -217,7 +217,7 @@ void Menu(X86Context& ctx, uint32_t ui) {
         aim = {};
         return;
     }
-    x = x * float(int32_t(R32(display + 0xD428))) / sx - (G<uint8_t>(display + 0xC) ? kWideOffset : 0.0f);
+    x = x * float(int32_t(R32(display + 0xD428))) / sx - (G<uint8_t>(display + 0xC) ? G<float>(kStageX) : 0.0f);
     y = y * float(int32_t(R32(display + 0xD42C))) / sy;
     bool moved = x != seen_x || y != seen_y;
     seen_x = x;

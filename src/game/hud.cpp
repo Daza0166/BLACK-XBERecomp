@@ -1,9 +1,11 @@
-// 2D is drawn 640x480 and shown 16:9. The game narrows its Flash menus itself; what its own 2D layer draws gets
-// x' = x * 3/4 + anchor * width / 4: HUD parts by their component's anchor, the rest 4:3 in the middle.
+// 2D is drawn 640x480 and shown as wide as the output. The game narrows its Flash menus itself; what its own 2D
+// layer draws gets x' = x * narrow + anchor * spare width: HUD parts by their component's anchor, the rest 4:3 in
+// the middle.
 #include <mutex>
 #include <vector>
 
 #include "app/app.h"
+#include "common/aspect.h"
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
 
@@ -15,21 +17,24 @@ constexpr uint32_t kDisplay = 0x2D67F4;  // +0 width, +0xC widescreen, +0xD428 w
 constexpr uint32_t kUi = 0x2D199C;       // +0x3710 Flash stage to screen
 constexpr uint32_t kAnchors = 0x2AD968;  // x, y share of the safe area per anchor id
 constexpr uint32_t kTaller = 0x2AD9BC;   // frame height the game gives the middle anchors on a widescreen
+constexpr uint32_t kStageX = 0x295DA4;   // where the game puts the 640 Flash stage on a widescreen, 106.67
 constexpr uint32_t kFromHud = 0x13C02F, kFromFlash = 0x121E82, kFromHost = 0xFFFFFFF0;  // return addresses
 constexpr float kOff = -1, kCentre = 0.5f;
 
 float g_anchor = kOff, g_width = 640;
 uint32_t g_hud = 0;  // the player's HUD while its list draws
 
-// The game takes the screen's shape once at boot: its flag, the view and the Flash stage follow the output
+// The game takes the screen's shape once at boot: its flag, the view and the Flash stage follow the output.
+// View width: the game's 1 on 4:3 and 1.2 on 16:9, past that the 16:9 height of view is kept
 void FollowOutput() {
     uint32_t display = R32(kDisplay), ui = R32(kUi);
-    bool wide = app::Widescreen();
-    if (!display || G<uint8_t>(display + 0xC) == uint8_t(wide)) return;
-    G<uint8_t>(display + 0xC) = wide;
-    G<float>(display + 0xD4C0) = wide ? 1.2f : 1.0f;
-    G<float>(display + 0xD4C4) = wide ? 16.0f / 9 : 4.0f / 3;
-    if (ui) G<float>(ui + 0x3710) = float(int32_t(R32(display + 0xD428))) / 640 * (wide ? 0.75f : 1.0f);
+    if (!display) return;
+    float k = game::Narrow();
+    G<uint8_t>(display + 0xC) = game::Wide();
+    G<float>(display + 0xD4C0) = std::max(0.4f + 0.6f / k, 0.9f / k);
+    G<float>(display + 0xD4C4) = game::Aspect();
+    G<float>(kStageX) = 320 * (1 / k - 1);
+    if (ui) G<float>(ui + 0x3710) = float(int32_t(R32(display + 0xD428))) / 640 * k;
 }
 
 // An emitter's points, eax: x, y pairs, each drawn at itself plus the offset at [esp+4]. Moved for the call, not
@@ -45,7 +50,7 @@ void Emit(X86Context& ctx, uint8_t* base, uint32_t count, F emit) {
         float& x = G<float>(points + i * 8);
         float at = (saved[i] = x) + offset;
         if (g_anchor == kCentre && (at <= 0 || at >= g_width)) continue;
-        x = at * 0.75f + g_anchor * g_width * 0.25f - offset;
+        x = at * game::Narrow() + g_anchor * g_width * (1 - game::Narrow()) - offset;
     }
     emit(ctx, base);
     for (uint32_t i = 0; i < count; i++) G<float>(points + i * 8) = saved[i];
@@ -71,7 +76,7 @@ X86_FUNC(sub_000D99A0) {
     std::lock_guard<std::recursive_mutex> lock(d3d::Lock());
     uint32_t width = d3d::State().viewport.w;
     bool screen = display && width == R32(display) && from != kFromFlash && from != kFromHost;
-    g_anchor = screen && app::Widescreen() ? kCentre : kOff;
+    g_anchor = screen && game::Wide() ? kCentre : kOff;
     g_width = float(width);
 }
 

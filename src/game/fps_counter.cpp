@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "app/app.h"
+#include "common/aspect.h"
 #include "common/options.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
@@ -33,7 +34,7 @@ void DrawFps(X86Context& ctx, uint8_t*) {
     int n = std::min(std::snprintf(text, sizeof text, "FPS: %.1f", double(game::g_fps.load())), 31);
     for (int i = 0; i <= n; i++) G<uint16_t>(chars + i * 2) = i < n ? uint8_t(text[i]) : 0;
     // a wide frame is shown stretched: the glyphs are drawn narrower by as much
-    float unit = h / 480, narrow = w / h / (app::Widescreen() ? 16.0f / 9 : 4.0f / 3);
+    float unit = h / 480, narrow = w / h / game::Aspect();
     float& width = G<float>(font + kWidthScale);
     float game_width = width;
     CallGuest(ctx, kBegin, {});
