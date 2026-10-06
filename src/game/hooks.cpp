@@ -236,6 +236,34 @@ void SwayEnd(X86Context&, uint8_t*) {
     g_sway = 0;
 }
 
+// A wait set and tested once a frame lasts whole frames of the game's frame time: as many at any frame rate.
+// rest is what the last wait ran over by
+static float WholeFrames(float wait, float rest) {
+    uint32_t timer = R32(0x2D45D4);
+    float dt = G<float>(timer + 0x1C), step = G<float>(0x2F3A38) / std::max(R32(timer + 0x18), 1u);
+    if (!(dt < step)) return wait;
+    int frames = 0;
+    for (float left = wait; left > 0 && frames < 4096; left -= step) frames++;
+    return std::max(frames, 1) * step + (rest < 0 && rest + dt > 0 ? rest : 0);
+}
+
+// the wait between a weapon's shots
+X86_EXTERN_FUNC(__imp__sub_001EEFD0);
+X86_FUNC(sub_001EEFD0) {
+    float& wait = G<float>(R32(ctx.esp + 4) + 0xDC);
+    float rest = wait;
+    __imp__sub_001EEFD0(ctx, base);
+    if (wait != rest) wait = WholeFrames(wait, rest);
+}
+
+// how long a shot holds an enemy's gun sound
+X86_EXTERN_FUNC(__imp__sub_0013FC20);
+X86_FUNC(sub_0013FC20) {
+    float& hold = G<float>(ctx.esp + 8);
+    hold = WholeFrames(hold, 0);
+    __imp__sub_0013FC20(ctx, base);
+}
+
 // The physics world steps once a frame by the frame time of the level's start and bodies hold their move a step:
 // both follow the real frame time, before the characters write theirs
 static bool g_rest_tick;
@@ -302,6 +330,20 @@ void GroundCoverFull(X86Context& ctx, uint8_t*) {
     G<float>(last + 8) = ctx.xmm[1].f[0];
     G<uint8_t>(last + 0xC) = uint8_t(ctx.ecx);
     G<uint8_t>(last + 0xD) = ctx.edx == 2;
+}
+
+// draw lists 0, 2 and 3 hold every mesh in reach: a full list drops the rest
+void DrawListRoom(X86Context&, uint8_t*) {
+    static const uint32_t caps[] = {4096, 0, 2048, 512};
+    static uint32_t room[4];
+    uint32_t list = R32(0x2D67F4) + 0xCA6C;
+    for (int i = 0; i < 4; i++, list += 0x18) {
+        if (!caps[i]) continue;
+        if (!room[i]) room[i] = mem::AllocSystem(caps[i] * 28);
+        W32(list, room[i]);
+        if (R32(list + 4)) W32(list + 4, room[i] + caps[i] * 20);
+        W32(list + 0xC, caps[i]);
+    }
 }
 
 // reload animations start the screen blur
