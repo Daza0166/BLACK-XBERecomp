@@ -427,6 +427,10 @@ call = "ParticleFade"
 at = 0x160919
 call = "GroundCoverFull"
 
+[[hook]]
+at = 0x1EE5EA
+call = "DrawListRoom"
+
 # src/game/fps_counter.cpp
 [[hook]]
 at = 0x20F8BF
