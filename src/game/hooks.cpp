@@ -118,6 +118,9 @@ X86_FUNC(sub_000BE3F0) {
     G<float>(t + 0x20) = time + float((steps() - before) * dt);
 }
 
+// frame throttle: sleeps that gave the console's one CPU to the loader
+X86_FUNC(sub_001F9130) { Return(ctx, ctx.eax, 1); }
+
 // The Flash menus and HUD tick in milliseconds, 33 a call: the real ones, the part of one carried over
 void MenuTick(X86Context& ctx, uint8_t*) {
     using clock = std::chrono::steady_clock;
