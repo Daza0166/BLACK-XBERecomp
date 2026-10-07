@@ -60,7 +60,23 @@ void Emit(X86Context& ctx, uint8_t* base, uint32_t count, F emit) {
 
 // textured quads and solid quads, two corners each
 X86_EXTERN_FUNC(__imp__sub_000D6C00);
-X86_FUNC(sub_000D6C00) { Emit(ctx, base, R32(ctx.esp + 8) * 2, __imp__sub_000D6C00); }
+static bool g_film = false;
+// the film quad covers the frame: 4:3 in the middle
+X86_FUNC(sub_000D6C00) {
+    if (!g_film || !game::Wide()) return Emit(ctx, base, R32(ctx.esp + 8) * 2, __imp__sub_000D6C00);
+    float* q = &G<float>(ctx.eax);
+    float saved[4] = {q[0], q[1], q[2], q[3]}, k = game::Narrow(), pad = (q[0] + q[2]) * (1 - k) / 2;
+    q[0] = q[0] * k + pad;
+    q[2] = q[2] * k + pad;
+    __imp__sub_000D6C00(ctx, base);
+    std::copy(saved, saved + 4, q);
+}
+X86_EXTERN_FUNC(__imp__sub_001217C0);
+X86_FUNC(sub_001217C0) {
+    g_film = true;
+    __imp__sub_001217C0(ctx, base);
+    g_film = false;
+}
 X86_EXTERN_FUNC(__imp__sub_000D6AA0);
 X86_FUNC(sub_000D6AA0) { Emit(ctx, base, R32(ctx.esp + 8) * 2, __imp__sub_000D6AA0); }
 // textured strip
