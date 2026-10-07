@@ -239,31 +239,64 @@ void SwayEnd(X86Context&, uint8_t*) {
     g_sway = 0;
 }
 
+static float Dt() { return G<float>(R32(0x2D45D4) + 0x1C); }
+
 // A wait set and tested once a frame lasts whole frames of the game's frame time: as many at any frame rate.
-// rest is what the last wait ran over by
+// rest is added, what the last wait ran over by
 static float WholeFrames(float wait, float rest) {
-    uint32_t timer = R32(0x2D45D4);
-    float dt = G<float>(timer + 0x1C), step = G<float>(0x2F3A38) / std::max(R32(timer + 0x18), 1u);
-    if (!(dt < step)) return wait;
+    float step = G<float>(0x2F3A38) / std::max(R32(R32(0x2D45D4) + 0x18), 1u);
+    if (!(Dt() < step)) return wait;
     int frames = 0;
     for (float left = wait; left > 0 && frames < 4096; left -= step) frames++;
-    return std::max(frames, 1) * step + (rest < 0 && rest + dt > 0 ? rest : 0);
+    return std::max(frames, 1) * step + rest;
 }
 
-// the wait between a weapon's shots
+static bool g_idle_early;
+
+// the wait between a weapon's shots. The frame of a first shot is part of it: the fire clip runs that frame too
+// and holds its next shot where the wait ends
 X86_EXTERN_FUNC(__imp__sub_001EEFD0);
 X86_FUNC(sub_001EEFD0) {
-    float& wait = G<float>(R32(ctx.esp + 4) + 0xDC);
-    float rest = wait;
+    uint32_t weapon = R32(ctx.esp + 4);
+    float& wait = G<float>(weapon + 0xDC);
+    float rest = wait, dt = Dt();
     __imp__sub_001EEFD0(ctx, base);
-    if (wait != rest) wait = WholeFrames(wait, rest);
+    uint32_t me = R32(weapon + 0xF0);
+    if (me == Player()) {
+        if (R32(weapon + 0xD8) != 1) g_idle_early = false;
+        else if (g_idle_early) W32(me + 0x32C, 0);  // the fire request is spent, as on the console
+    }
+    if (wait == rest) return;
+    wait = WholeFrames(wait, rest <= 0 && rest > -dt ? rest : -dt);
 }
 
-// how long a shot holds an enemy's gun sound
+// A fire clip that ends before the wait does hands over to the idle early: the request would start it again.
+// An idle fading in over a looping fire clip holds it still instead of running it into its next shot
+X86_EXTERN_FUNC(__imp__sub_0017B130);
+X86_FUNC(sub_0017B130) {
+    uint32_t ac = R32(ctx.esp + 4), from = R32(ac + 0x90), clip = R32(ac + 0x54);
+    if (R32(ac) != Player() || !clip) return __imp__sub_0017B130(ctx, base);
+    int16_t slot = G<int16_t>(clip + 0x1C8);
+    uint32_t fade = clip + 0x88 + slot * 0x28;
+    __imp__sub_0017B130(ctx, base);
+    if (G<int16_t>(clip + 0x1C8) == slot || FrameShare() >= 1) return;
+    uint32_t weapon = R32(R32(ac) + 0x29C);
+    if (weapon && R32(weapon + 0xD8) == 1) {
+        std::string name = ReadCString(ac + 0x5C, 13);
+        static const char* fire[] = {"S_100", "S_110", "S_114", "S_130", "S_170", "S_176"};
+        bool fired = false;
+        for (auto f : fire) fired |= name.size() >= 5 && name.compare(name.size() - 5, 5, f) == 0;
+        if (!fired) g_idle_early = true;
+    }
+    bool fire = from && R32(from + 0x10) == 3 && R32(from + 0x18) == 0x6D9D2AC0;
+    if (fire && G<uint16_t>(fade + 0x24)) W32(fade + 0x18, 2);
+}
+
+// how long a shot holds an enemy's gun sound: past the wait
 X86_EXTERN_FUNC(__imp__sub_0013FC20);
 X86_FUNC(sub_0013FC20) {
     float& hold = G<float>(ctx.esp + 8);
-    hold = WholeFrames(hold, 0);
+    hold = WholeFrames(hold, Dt());
     __imp__sub_0013FC20(ctx, base);
 }
 
