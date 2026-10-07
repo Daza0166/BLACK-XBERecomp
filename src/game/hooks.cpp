@@ -263,7 +263,7 @@ X86_FUNC(sub_001EEFD0) {
     __imp__sub_001EEFD0(ctx, base);
     uint32_t me = R32(weapon + 0xF0);
     if (me == Player()) {
-        if (R32(weapon + 0xD8) != 1) g_idle_early = false;
+        if (R32(weapon + 0xD8) != 1 || wait != rest) g_idle_early = false;
         else if (g_idle_early) W32(me + 0x32C, 0);  // the fire request is spent, as on the console
     }
     if (wait == rest) return;
