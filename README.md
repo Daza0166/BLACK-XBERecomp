@@ -1,60 +1,78 @@
 # Black - XBE Recomp
+An unofficial native PC port of the original Xbox version of Black, with extended graphics options, keyboard and mouse support, and other enhancements.
 
-A static recompilation of the original Xbox version of Black (2006) into a native 64 bit Windows executable. The game's x86 code is translated to C++ ahead of time, the Xbox kernel, Direct3D and DirectSound calls are implemented on Windows, and everything is drawn with Direct3D 12 and played through XAudio2. Made with the [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp) tool.
-
-## Game Setup
-
-- Put the game files in the `assets` folder.
-- Run `Black.exe`.
-- You can adjust the recomp settings inside the in-game options menu whilst the game is running, or alternatively via the F10 quick menu.
-
-
+This port was created using the [Xbox XBE Recomp](https://github.com/TGP482/XboxXBE-Recomp) tool.
 
 > [!NOTE]
-> No game data, XBE bytes or generated code are in this repository. You must own the game.
+> This project does not include any game assets. You must provide the files from your own legally acquired copy of the game to install or build.
+
+## Installation
+- Put your game files in the `assets` folder. This can be an ISO, or the extracted data files.
+- Run `Black.exe`.
+- Recomp settings can be adjusted in the in-game options menu while the game is running, or through the Settings overlay, which is opened with F10 by default.
 
 ## Features
-
 ### Display
-- **Native Renderer** - The game renders through a native Direct3D 12 renderer, no emulation.
-- **Display Mode** - Allows you to change between Fullscreen, Borderless and Windowed modes.
-- **Resolution** - Lists every mode your monitor reports and defaults to the desktop mode, replacing the 640x480 lock.
-- **Render Resolution** - Renders the game at 20% to 200% of the output resolution, for supersampling or downscaling, independent of the window size.
-- **Field of View** - Sets the horizontal field of view during gameplay from 45 to 140 degrees, 70 being the game's own.
-- **Max Frame Rate** - Caps the frame rate at your monitor's refresh rate, at a value you pick, or removes the cap, replacing the console's 30 FPS limiter.
-- **V-Sync** - Enables V-Sync, reducing tearing.
-- **FPS Counter** - Shows the frame rate on screen.
+- **Display Mode** - Switch between Fullscreen, Borderless and Windowed.
+- **Resolution** - Lists every mode your monitor reports and defaults to your desktop resolution, replacing the original 640x480 resolution.
+- **Render Resolution** - Renders the game at 20% to 200% of the output resolution, allowing supersampling or downscaling independent of the window size.
+- **Field of View** - Sets the horizontal field of view during gameplay from 45 to 140 degrees, with 70 being the game's default.
+- **Viewmodel Field of View** - Adjusts the first-person weapon and arms field of view.
+- **Max Frame Rate** - Caps the frame rate to your monitor's refresh rate or a custom value, or removes the cap entirely, replacing the Xbox's 30 FPS limiter.
+- **V-Sync** - Reduces screen tearing.
+- **FPS Counter** - Displays the frame rate on screen.
 
 ### Graphics
-- **MSAA** - Smooths geometry edges with 2x, 4x or 8x MSAA.
+- **Multisample Antialiasing (MSAA)** - Enables 2x, 4x or 8x MSAA to smooth jagged edges while preserving a sharp image.
 - **Anisotropic Filtering** - Forces the selected anisotropic filtering level on all textures.
 - **Draw Distance** - Increases the level of detail and draw distances past the game's values: 2x, 4x or 8x.
+- **Reload Blur** - Toggles the blur effect while reloading.
 
 ### Mouse and Keyboard
-- **Keyboard Support** - Fully supports keyboard and mouse input.
-- **Raw Mouse** - Native raw mouse input driven straight into the camera.
-- **Mouse Look Sensitivity** - Adjusts mouse look sensitivity.
-- **Invert Mouse Look** - Inverts the vertical look axis.
-- **Hold To Aim** - Aims down scopes while the button is held instead of toggling with a tap.
-- **Rebinding** - Every action can be rebound from the Mouse and Keyboard page.
-- **Custom Menu Cursor** - Put a `cursor.png` (or `cursor.dds`) beside the exe to replace the Windows arrow in the game's menus.
+Full keyboard and mouse support with raw input, adjustable sensitivity, inverted look and rebindable controls.
 
 ### General
-- **Skip Intro** - Skips the intro logo's.
+- **Skip Intro** - Skips the intro logos.
 
-### System Requirements
+### Miscellaneous
+- **Custom Menu Cursor** - Place a `cursor.png` (or `cursor.dds`) beside the exe to replace the Windows arrow in the game's menus.
 
-**Minimum**
-- **OS** - Windows 10 64 bit.
-- **CPU** - 2 cores with SSE4.2 and POPCNT: Intel Core i3/i5/i7 1st generation (Nehalem) or AMD FX (Bulldozer).
-- **GPU** - Direct3D 12 with feature level 11_0: NVIDIA GeForce GT 630 (Kepler), AMD Radeon HD 7750 or Intel HD Graphics 510 (Skylake).
-- **Memory** - 4 GB.
-- **Storage** - 5 GB for the game files, saves and shader cache.
+## System Requirements
+### Minimum
+- **OS**
+  - Windows 10 64-bit
+- **CPU** with 2 cores and support for SSE4.2 and POPCNT
+  - Intel Nehalem (Intel Core 1st Generation)
+  - AMD Bulldozer (AMD FX series)
+- **GPU** with support for Direct3D 12
+  - NVIDIA GeForce GT 630 (Kepler)
+  - AMD Radeon HD 7750
+  - Intel HD Graphics 510 (Skylake)
+- **Memory**
+  - 4 GB
+- **Storage**
+  - 5 GB for the game files, saves and shader cache
 
-### Build
+## Building
+### 1. Clone the Repository
+Clone this repository using [Git](https://git-scm.com/).
+```
+git clone https://github.com/TGP482/BLACK-XBERecomp.git
+```
 
-- Install Visual Studio 2022 with **Desktop development with C++**, **C++ Clang tools for Windows** and **C++ CMake tools for Windows** (build.bat offers to add the last two), plus Git.
-- Clone this repository.
-- Put the game files in the `assets` folder.
-- Run `build.bat`. The first build recompiles the game and takes a while.
-- Run `out\build\release\Black.exe`.
+### 2. Add the Required Game Files
+Place your extracted game data files in the `assets` folder. `default.xbe` must be there, with the rest of the game's files beside it.
+
+
+### 3. Install Dependencies
+Install [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) and select the following **Workloads** and **Individual components**:
+- Desktop development with C++
+- C++ Clang tools for Windows
+- C++ CMake tools for Windows
+
+> [!TIP]
+> `build.bat` offers to install the Clang and CMake components for you if they're missing.
+
+### 4. Build the Project
+- Run `build.bat`. The first build recompiles the entire game and can take 30 to 90 minutes on weaker systems.
+- When it finishes, run `out\build\release\Black.exe`.
