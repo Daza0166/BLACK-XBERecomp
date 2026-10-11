@@ -351,6 +351,34 @@ call = "BodyRestTick"
 on_false = 0x77EEF
 
 [[hook]]
+at = 0x7941E
+call = "JointTurnCap"
+
+[[hook]]
+at = 0x79429
+call = "JointTurnCap"
+
+[[hook]]
+at = 0x79464
+call = "JointTurnCapNext"
+
+[[hook]]
+at = 0x7946F
+call = "JointTurnCapNext"
+
+[[hook]]
+at = 0xA18A5
+call = "ContactReach"
+
+[[hook]]
+at = 0xE054A
+call = "RagdollLookAhead"
+
+[[hook]]
+at = 0xE056D
+call = "RagdollLookAhead"
+
+[[hook]]
 at = 0x17B239
 call = "ReloadBlur"
 on_false = 0x17B3AA

@@ -309,12 +309,17 @@ void PhysicsTime(X86Context&, uint8_t*) {
     if (!world || !(dt > 0)) return;
     float& step = G<float>(world + 0x380);
     if (step > 0 && step != dt) {
-        static const uint32_t kMove[] = {0x20, 0x24, 0x28, 0x30, 0x34, 0x38}, kGravity[] = {0x90, 0x94, 0x98};
+        static const uint32_t kMove[] = {0x20, 0x24, 0x28, 0x30, 0x34, 0x38, 0xA0, 0xA4, 0xA8};
         float by = dt / step;
         uint32_t body = R32(world + 0x29C);
         for (int left = 4096; body && body != world + 0x270 && left; left--, body = R32(body + 0x2C)) {
             for (uint32_t at : kMove) G<float>(body + at) *= by;
-            for (uint32_t at : kGravity) G<float>(body + at) *= by * by;
+            // gravity a step squared, an impulse on top of it a step
+            for (int i = 0; i < 12; i += 4) {
+                float g = G<float>(world + 0x370 + i);
+                G<float>(body + 0x90 + i) = (G<float>(body + 0x90 + i) - g) * by + g * by * by;
+            }
+            G<float>(body + 0x9C) *= by * by;
         }
     }
     step = dt;
@@ -338,6 +343,18 @@ void BodyDamping(X86Context& ctx, uint8_t*) {
         if (float& keep = ctx.xmm[i].f[0]; keep > 0) keep = std::pow(keep, FrameShare());
 }
 void BodyTopSpeed(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
+
+// a joint lets its bodies turn apart by at most a set angle a step
+void JointTurnCap(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= FrameShare(); }
+void JointTurnCapNext(X86Context& ctx, uint8_t*) { ctx.xmm[6].f[0] *= FrameShare(); }
+
+// contacts are searched this far ahead at least: twice the fall of a step at the game's frame rate
+void ContactReach(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] = 1 / G<float>(0x2F3A38); }
+
+// a ragdoll brakes for a wall within 8 frames of its speed: frames of the game's frame rate
+void RagdollLookAhead(X86Context& ctx, uint8_t*) {
+    if (float share = FrameShare(); share > 0) ctx.xmm[0].f[0] /= share;
+}
 
 // LOD and draw distances reach this many times farther: each compare sees a distance that much shorter or a
 // limit that much longer. Characters, props, pickups, ground cover, particles and bullet holes
