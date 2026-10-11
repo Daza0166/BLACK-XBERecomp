@@ -9,6 +9,7 @@
 
 #include "app/app.h"
 #include "core/diag.h"
+#include "d3d/occlusion.h"
 #include "gpu/backend.h"
 #include "gpu/texture.h"
 #include "gpu/vertex.h"
@@ -199,6 +200,16 @@ void ViewScale(float xy) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     g_view_scale = xy;
     UpdateViewportConstants();
+}
+
+// sent as p: 1 / the projection's x and y scale, its x and y centre, then view z = p[4] / (ndc depth - p[5])
+void Occlusion(const float* m) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    bool perspective = m[11] == 1.0f && m[15] == 0.0f;
+    if (!g_backend || !perspective || !m[0] || !m[5]) return;
+    const float p[4 * gpu::kOcclusionRects] = {1 / m[0], 1 / m[5], m[8], m[9], m[14], m[10], 0, 0};
+    const uint8_t* rects = reinterpret_cast<const uint8_t*>(p);
+    g_backend->Clear(g_state, gpu::kOcclusionRects, rects, gpu::kClearOcclusion, 0, 0, 0);
 }
 
 }  // namespace d3d
