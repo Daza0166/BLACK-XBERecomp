@@ -506,3 +506,8 @@ call = "EndImmediate"
 [[hook]]
 at = 0x2139D
 call = "HudItem"
+
+# src/game/ambient_occlusion.cpp
+[[hook]]
+at = 0x1EE9A5
+call = "AmbientOcclusion"

@@ -155,7 +155,9 @@ void Changed(bool display) {
     Save();
 }
 
-enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur, kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kMsaa };
+enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur,
+             kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kMsaa,
+             kAmbientOcclusion };
 
 using rows::Kind;
 using rows::Row;
@@ -174,6 +176,7 @@ constexpr Row kSettingsRows[] = {
     {Kind::Value, kMsaa, "MSAA"},
     {Kind::Value, kAniso, "ANISOTROPIC FILTERING"},
     {Kind::Value, kDrawDistance, "DRAW DISTANCE"},
+    {Kind::Value, kAmbientOcclusion, "AMBIENT OCCLUSION"},
     {Kind::Value, kReloadBlur, "RELOAD BLUR"},
     {Kind::Heading, -1, "GENERAL"},
     {Kind::Value, kSkipIntros, "SKIP INTROS"},
@@ -263,6 +266,10 @@ std::string RowText(int id, int step, Settings& s = Get()) {
             break;
         case kMsaa:
             std::snprintf(text, sizeof(text), "%s", kMsaaNames[StepTable(kMsaaValues, o.msaa, step)]);
+            break;
+        case kAmbientOcclusion:
+            Flip(o.ambient_occlusion, step);
+            std::snprintf(text, sizeof(text), "%s", OnOff(o.ambient_occlusion));
             break;
         case kReloadBlur:
             Flip(o.reload_blur, step);
