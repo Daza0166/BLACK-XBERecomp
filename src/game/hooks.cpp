@@ -357,6 +357,16 @@ void RagdollLookAhead(X86Context& ctx, uint8_t*) {
     if (float share = FrameShare(); share > 0) ctx.xmm[0].f[0] /= share;
 }
 
+// A joint past its limit is pushed back within one step and keeps that push as speed: back within a frame of
+// the game's frame rate instead. xmm6 the room to the upper or lower limit, xmm0 a locked axis' error
+void JointUpperRoom(X86Context& ctx, uint8_t*) {
+    if (ctx.xmm[6].f[0] < 0) ctx.xmm[6].f[0] *= FrameShare();
+}
+void JointLowerRoom(X86Context& ctx, uint8_t*) {
+    if (ctx.xmm[6].f[0] > 0) ctx.xmm[6].f[0] *= FrameShare();
+}
+void JointLockedError(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= FrameShare(); }
+
 // Glass shards (0x1690D0, 0x110 bytes each) move, turn and count down once a frame of the game's frame rate
 constexpr uint32_t kShardAngle = 0xF4;
 static bool g_shard_tick;
