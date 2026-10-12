@@ -160,6 +160,45 @@ void SyncDeferred() {
         for (uint32_t i = 0; i < gpu::kTssBumpEnvMat00; i++) g_state.tss[s][i] = R32(kTextureState + (s * kStageStates + i) * 4);
 }
 
+// The game fogs its world with linear table fog (0x16FAB0), its vertex programs give the distance as
+// oFog = min(clip z, c[18].z). The frame's latest fogged program draw tells ambient occlusion how thick it is
+constexpr uint32_t kFogLinear = 3;
+constexpr uint32_t kFogLimit = 18;  // c[18].z, the farthest fog distance
+
+struct Fog {
+    float start = 0;
+    float end = 0;
+    float limit = 0;
+};
+Fog g_fog;
+
+float StateFloat(uint32_t rs) {
+    float f;
+    std::memcpy(&f, &g_state.rs[rs], 4);
+    return f;
+}
+
+void LatchFog() {
+    bool program = (g_state.vs_handle & 1) != 0;
+    if (!program || !g_state.rs[gpu::kRsFogEnable] || g_state.rs[gpu::kRsFogTableMode] != kFogLinear) return;
+    g_fog = {StateFloat(gpu::kRsFogStart), StateFloat(gpu::kRsFogEnd), g_state.vsc[kFogLimit][2]};
+}
+
+// fog amount at view depth z: min(saturate(slope * z + offset), most)
+struct FogFade {
+    float slope = 0;
+    float offset = 0;
+    float most = 0;
+};
+
+// m: the camera to screen matrix, clip z = m[10] * view z + m[14]
+FogFade FogOverDepth(const float* m) {
+    float range = g_fog.end - g_fog.start;
+    if (range <= 0) return {};
+    float most = std::clamp((g_fog.limit - g_fog.start) / range, 0.0f, 1.0f);
+    return {m[10] / range, (m[14] - g_fog.start) / range, most};
+}
+
 float ZScale(const gpu::Surface& zs) {
     uint32_t f = zs.header ? (zs.format >> 8) & 0xFF : 0x2E;
     return f == 0x2C || f == 0x30 ? 65535.0f : 16777215.0f;
@@ -204,13 +243,15 @@ void ViewScale(float xy) {
 }
 
 // sent as p: 1 / the projection's x and y scale, its x and y centre, then view z = p[4] / (ndc depth - p[5]),
-// then p[6]: 1 for GTAO, 0 for SSAO
+// then p[6]: 1 for GTAO, 0 for SSAO, then the fog already drawn: min(saturate(p[8] * view z + p[9]), p[10])
 void Occlusion(const float* m, bool gtao) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     bool perspective = m[11] == 1.0f && m[15] == 0.0f;
     if (!g_backend || !perspective || !m[0] || !m[5]) return;
     float mode = gtao ? 1.0f : 0.0f;
-    const float p[4 * gpu::kOcclusionRects] = {1 / m[0], 1 / m[5], m[8], m[9], m[14], m[10], mode, 0};
+    FogFade fog = FogOverDepth(m);
+    const float p[4 * gpu::kOcclusionRects] = {1 / m[0], 1 / m[5], m[8], m[9], m[14], m[10], mode, 0,
+                                               fog.slope, fog.offset, fog.most, 0};
     const uint8_t* rects = reinterpret_cast<const uint8_t*>(p);
     g_backend->Clear(g_state, gpu::kOcclusionRects, rects, gpu::kClearOcclusion, 0, 0, 0);
 }
@@ -458,6 +499,7 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
         }
     }
     if (g_backend) g_backend->Present(SurfaceOf(g_buffers[1]));
+    g_fog = {};
     app::PaceFrame();
     // like the XDK, the surfaces stay put and their memory rotates: titles keep back buffer pointers and copy its data
     uint32_t last = g_buffers[g_buffer_count - 1], data = R32(last + 4), lk = R32(last + 8);
@@ -858,6 +900,7 @@ HLE_STDCALL(D3DDevice_SetPixelShaderConstant, 3) {
 HLE_STDCALL(D3DDevice_DrawVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     SyncDeferred();
+    LatchFog();
     if (g_backend) g_backend->Draw(g_state, a[0], a[1], a[2], nullptr);
     return 0;
 }
@@ -865,6 +908,7 @@ HLE_STDCALL(D3DDevice_DrawVertices, 3) {
 HLE_STDCALL(D3DDevice_DrawIndexedVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     SyncDeferred();
+    LatchFog();
     const uint8_t* indices = a[2] ? static_cast<const uint8_t*>(HostPtr(a[2])) : nullptr;
     if (g_backend) g_backend->Draw(g_state, a[0], 0, a[1], indices);
     return 0;
@@ -901,6 +945,7 @@ uint32_t UpVertices(const void* src, uint32_t bytes) {
 void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride) {
     if (!g_backend || !count || !stride) return;
     SyncDeferred();
+    LatchFog();
     auto stream = g_state.streams[0];
     g_state.streams[0] = {UpVertices(vertices, count * stride), stride};
     g_backend->Draw(g_state, prim, 0, count, nullptr);

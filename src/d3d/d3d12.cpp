@@ -129,7 +129,7 @@ float psmain(O i) : SV_Depth {
 // from the scene's depth: occlusion pass, then a blur across and one down that multiplies it into the colour.
 // The sky is far: a pixel's samples there span less than one pixel and it stays lit
 const char* kAoHlsl = R"(
-cbuffer A : register(b1) { float4 proj; float4 zp; float4 vp; float4 opt; };
+cbuffer A : register(b1) { float4 proj; float4 zp; float4 vp; float4 opt; float4 fog; };
 #ifdef MS
 Texture2DMS<float> depth : register(t0);
 float Raw(int2 p) { return depth.Load(p, 0); }
@@ -254,12 +254,16 @@ float2 occlusion_blur(float4 pos : SV_Position) : SV_Target {
     float a = Smooth(pos.xy, z);
     return float2(a, z);
 }
+// fog: the game's, already drawn over the scene, fades the occlusion out as it thickens
 float4 occlusion_apply(float4 pos : SV_Position) : SV_Target {
     float z;
-    return float4(Smooth(pos.xy, z).xxx, 1);
+    float a = Smooth(pos.xy, z);
+    float fogged = min(saturate(fog.x * z + fog.y), fog.z);
+    return float4(lerp(a, 1, fogged).xxx, 1);
 }
 )";
 constexpr int kAoTargets = 2;
+constexpr int kAoConstants = 20;  // kAoHlsl's b1
 constexpr DXGI_FORMAT kAoFormat = DXGI_FORMAT_R16G16_FLOAT;
 constexpr float kAoRadius = 0.8f;    // world units, the engine's are metres
 constexpr float kAoMaxSpan = 0.15f;  // of the view's height, the most one pixel's samples may cover
@@ -275,13 +279,15 @@ D3D12_RECT ViewRect(const Viewport& v, const Target& t) {
     return r;
 }
 
-// b1 of kAoHlsl: proj, zp with the viewport's depth range, vp, opt (its step written per pass)
-void OcclusionConstants(const Viewport& v, const D3D12_RECT& r, const float p[8], float c[16]) {
+// b1 of kAoHlsl: proj, zp with the viewport's depth range, vp, opt (its step written per pass), fog
+void OcclusionConstants(const Viewport& v, const D3D12_RECT& r, const float p[4 * kOcclusionRects],
+                        float c[kAoConstants]) {
     float zr = v.max_z - v.min_z;
     float w = float(r.right - r.left);
     float h = float(r.bottom - r.top);
-    const float out[16] = {p[0], p[1], p[2], p[3], p[4] * zr, v.min_z + p[5] * zr, 0, 0,
-                           float(r.left), float(r.top), w, h, kAoRadius, kAoMaxSpan * h, 0, 0};
+    const float out[kAoConstants] = {p[0], p[1], p[2], p[3], p[4] * zr, v.min_z + p[5] * zr, 0, 0,
+                                     float(r.left), float(r.top), w, h, kAoRadius, kAoMaxSpan * h, 0, 0,
+                                     p[8], p[9], p[10], 0};
     std::memcpy(c, out, sizeof(out));
 }
 
@@ -522,13 +528,13 @@ private:
         float step_x;
         float step_y;
     };
-    void Occlusion(const State& s, const float p[8]);
+    void Occlusion(const State& s, const float p[4 * kOcclusionRects]);
     bool OcclusionFits(const Target* rt, const Target* ds) const;
     bool OcclusionTargets(uint32_t w, uint32_t h);
     D3D12_CPU_DESCRIPTOR_HANDLE OcclusionView(int i) { return Cpu(rtv_heap_.Get(), kRtvCount + kFrames + i, rtv_inc_); }
     ID3D12PipelineState* OcclusionPipeline(const AoPass& a);
     void OcclusionViews(uint32_t slot, const AoPass& a);
-    bool OcclusionPass(const AoPass& a, float c[16], const D3D12_RECT& rect, uint32_t w, uint32_t h);
+    bool OcclusionPass(const AoPass& a, float c[kAoConstants], const D3D12_RECT& rect, uint32_t w, uint32_t h);
     ID3D12Resource* BindTexture(const State& s, int stage, TexInfo& info, D3D12_SHADER_RESOURCE_VIEW_DESC& srv);
     Target* draw_rt_ = nullptr;  // the draw's targets, the bound ones go when a texture's copy is drawn
     Target* draw_ds_ = nullptr;
@@ -1015,7 +1021,7 @@ bool D3D12Backend::DepthPass(ID3D12Resource* src, uint32_t src_samples, D3D12_CP
 }
 
 // multiplies occlusion from the scene's depth into its colour, p as d3d::Occlusion sends it
-void D3D12Backend::Occlusion(const State& s, const float p[8]) {
+void D3D12Backend::Occlusion(const State& s, const float p[4 * kOcclusionRects]) {
     Target* rt = GetTarget(s.rt, false, false);
     Target* ds = GetTarget(s.zs, true, false);
     if (!OcclusionFits(rt, ds)) return;
@@ -1030,7 +1036,7 @@ void D3D12Backend::Occlusion(const State& s, const float p[8]) {
     uint32_t samples = Ms(*ds);
     LOG_FIRST(1, "d3d12: ambient occlusion %s %ux%u, %u samples, projection %.4f %.4f, view z %.6f / (depth - %.8f)",
               p[6] ? "GTAO" : "SSAO", rt->w, rt->h, samples, 1 / p[0], 1 / p[1], p[4], p[5]);
-    float c[16];
+    float c[kAoConstants];
     OcclusionConstants(v, rect, p, c);
     const char* entry = p[6] ? "gtao" : "occlusion";
     AoPass raw{entry, kAoFormat, 1, false, OcclusionView(0), ds->res.Get(), samples > 1, nullptr, 0, 0};
@@ -1127,7 +1133,8 @@ void D3D12Backend::OcclusionViews(uint32_t slot, const AoPass& a) {
     }
 }
 
-bool D3D12Backend::OcclusionPass(const AoPass& a, float c[16], const D3D12_RECT& rect, uint32_t w, uint32_t h) {
+bool D3D12Backend::OcclusionPass(const AoPass& a, float c[kAoConstants], const D3D12_RECT& rect, uint32_t w,
+                                 uint32_t h) {
     ID3D12PipelineState* pso = OcclusionPipeline(a);
     if (!pso) return false;
     uint32_t slot = SrvSlots(4);
@@ -1135,7 +1142,7 @@ bool D3D12Backend::OcclusionPass(const AoPass& a, float c[16], const D3D12_RECT&
     c[14] = a.step_x;
     c[15] = a.step_y;
     Alloc cb = Upload(256, 256);
-    std::memcpy(cb.cpu, c, 16 * sizeof(float));
+    std::memcpy(cb.cpu, c, kAoConstants * sizeof(float));
     D3D12_VIEWPORT vp{0, 0, float(w), float(h), 0, 1};
     cl_->OMSetRenderTargets(1, &a.rtv, FALSE, nullptr);
     cl_->RSSetViewports(1, &vp);
