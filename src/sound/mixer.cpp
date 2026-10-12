@@ -115,6 +115,14 @@ void Levels(Voice& v, float g[2][2]) {
             if (!std::isfinite(g[c][side])) g[c][side] = 0;
 }
 
+// 3D levels follow the listener once a game frame: stepped per block, a fast turn clicks
+void UpdateRamp(Voice& v, const float g[2][2], uint32_t frames, float dg[2][2]) {
+    if (!v.has_gain) std::memcpy(v.gain, g, sizeof(v.gain));
+    v.has_gain = true;
+    for (int c = 0; c < 2; c++)
+        for (int side = 0; side < 2; side++) dg[c][side] = (g[c][side] - v.gain[c][side]) / float(frames);
+}
+
 void Render(float* out, uint32_t frames) {
     std::memset(out, 0, frames * 2 * sizeof(float));
     std::lock_guard<std::recursive_mutex> lock(g_lock);
@@ -122,6 +130,8 @@ void Render(float* out, uint32_t frames) {
         if (v.paused || v.sync || (!v.stream && !v.playing)) continue;
         float g[2][2];
         Levels(v, g);
+        float dg[2][2];
+        UpdateRamp(v, g, frames, dg);
         uint32_t base = v.data + v.play_start;
         double step = double(v.freq ? v.freq : v.rate) / audio::kRate;
         for (uint32_t i = 0; i < frames; i++) {
@@ -175,10 +185,13 @@ void Render(float* out, uint32_t frames) {
             float t = float(v.pos - f);
             a += (a1 - a) * t;
             b += (b1 - b) * t;
-            out[i * 2] += a * g[0][0] + b * g[1][0];
-            out[i * 2 + 1] += a * g[0][1] + b * g[1][1];
+            for (int c = 0; c < 2; c++)
+                for (int side = 0; side < 2; side++) v.gain[c][side] += dg[c][side];
+            out[i * 2] += a * v.gain[0][0] + b * v.gain[1][0];
+            out[i * 2 + 1] += a * v.gain[0][1] + b * v.gain[1][1];
             v.pos += step;
         }
+        std::memcpy(v.gain, g, sizeof(v.gain));
     }
     for (uint32_t i = 0; i < frames * 2; i++) out[i] = std::clamp(out[i], -1.0f, 1.0f);
 }

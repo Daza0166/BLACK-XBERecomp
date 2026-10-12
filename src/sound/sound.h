@@ -45,6 +45,8 @@ struct Voice {
     bool is3d = false;
     uint32_t mode = 0;  // DS3DMODE: 1 head relative, 2 disabled
     float p[3] = {}, min_dist = 1, max_dist = 1e9f;
+    float gain[2][2] = {};  // the last block's levels, the next block ramps from them
+    bool has_gain = false;
     // ADPCM block cache
     int64_t block = -1;
     int16_t decoded[65 * 8];
