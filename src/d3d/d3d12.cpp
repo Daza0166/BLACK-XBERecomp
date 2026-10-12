@@ -362,6 +362,29 @@ D3D12_STENCIL_OP StencilOp(uint32_t v) {
     }
 }
 
+// A small draw whose every float2 input lies in 0..1: sprites, HUD pieces, text. Upscaled, the far edge's last half
+// texel is drawn too and wrap blends in the opposite edge (thin lines on HUD sprites); clamp takes the edge texel.
+bool UnitTexcoords(const Assembled& a) {
+    constexpr float kLo = -1e-4f;
+    constexpr float kHi = 1.0001f;
+    constexpr uint32_t kSmallDrawVertices = 4096;
+    if (!a.vertices.empty() || !a.vertex_count || a.vertex_count > kSmallDrawVertices) return false;
+    bool any = false;
+    for (int r = 0; r < 16; r++) {
+        const VertexElement& e = a.elements[size_t(r)];
+        if (!(a.regs >> r & 1) || e.format != DXGI_FORMAT_R32G32_FLOAT) continue;
+        const VertexBuffer& vb = a.buffers[e.buffer];
+        if (!vb.src || !vb.stride || uint64_t(a.vertex_count) * vb.stride > vb.bytes) return false;
+        for (uint32_t v = 0; v < a.vertex_count; v++) {
+            float uv[2];
+            std::memcpy(uv, vb.src + size_t(v) * vb.stride + e.offset, sizeof(uv));
+            if (!(uv[0] >= kLo && uv[0] <= kHi && uv[1] >= kLo && uv[1] <= kHi)) return false;
+        }
+        any = true;
+    }
+    return any;
+}
+
 D3D12_TEXTURE_ADDRESS_MODE Address(uint32_t v) {
     switch (v) {
         case 2: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR;
@@ -542,7 +565,7 @@ private:
     float tex_k_[4] = {1, 1, 1, 1};  // Extension::Sample's k
     float tex_wide_[4] = {};  // host texels per console texel of a target read into a smaller one, 0 otherwise
     bool tex_blur_[4] = {};   // tex_wide_ for a blur between small targets
-    uint32_t Samplers(const State& s, const TexInfo info[4], const D3D12_SHADER_RESOURCE_VIEW_DESC sv[4]);
+    uint32_t Samplers(const State& s, const TexInfo info[4], const D3D12_SHADER_RESOURCE_VIEW_DESC sv[4], bool clamp);
     ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
     ID3D12PipelineState* Pipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
     ID3D12PipelineState* BlitPipeline(DXGI_FORMAT rtv, bool over, uint32_t samples);
@@ -1648,7 +1671,10 @@ ID3D12Resource* D3D12Backend::BindTexture(const State& s, int stage, TexInfo& in
     return tx.res.Get();
 }
 
-uint32_t D3D12Backend::Samplers(const State& s, const TexInfo info[4], const D3D12_SHADER_RESOURCE_VIEW_DESC sv[4]) {
+uint32_t D3D12Backend::Samplers(const State& s, const TexInfo info[4], const D3D12_SHADER_RESOURCE_VIEW_DESC sv[4],
+                                bool clamp) {
+    constexpr uint32_t kTaddressWrap = 1;
+    constexpr uint32_t kTaddressClamp = 3;
     D3D12_SAMPLER_DESC sd[4] = {};
     uint32_t aniso = app::Get().aniso;
     for (int i = 0; i < 4; i++) {
@@ -1667,8 +1693,11 @@ uint32_t D3D12Backend::Samplers(const State& s, const TexInfo info[4], const D3D
             sd[i].Filter = D3D12_FILTER_ANISOTROPIC;
             sd[i].MaxAnisotropy = std::min<uint32_t>(an, 16);
         }
-        sd[i].AddressU = Address(t[kTssAddressU]);
-        sd[i].AddressV = Address(t[kTssAddressV]);
+        // clamp: the draw's coordinates all lie in 0..1 (UnitTexcoords), so wrap is read as clamp
+        uint32_t u = t[kTssAddressU];
+        uint32_t v = t[kTssAddressV];
+        sd[i].AddressU = Address(clamp && u == kTaddressWrap ? kTaddressClamp : u);
+        sd[i].AddressV = Address(clamp && v == kTaddressWrap ? kTaddressClamp : v);
         sd[i].AddressW = Address(t[kTssAddressW]);
         sd[i].MipLODBias = Bits(t[kTssMipLodBias]);
         sd[i].MinLOD = float(t[kTssMaxMipLevel]);
@@ -1999,7 +2028,8 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t 
         dev_->CreateShaderResourceView(res[i], &sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
     }
     cl_->SetGraphicsRootDescriptorTable(2, Gpu(srv_heap_.Get(), slot, srv_inc_));
-    cl_->SetGraphicsRootDescriptorTable(3, Gpu(smp_heap_.Get(), Samplers(s, info, sv), smp_inc_));
+    uint32_t samplers = Samplers(s, info, sv, UnitTexcoords(a));
+    cl_->SetGraphicsRootDescriptorTable(3, Gpu(smp_heap_.Get(), samplers, smp_inc_));
 
     // viewport covers the target, the guest viewport is in the shader; scissor clips to it
     float W = float(bound_rt_ ? bound_rt_->w : bound_ds_->w), H = float(bound_rt_ ? bound_rt_->h : bound_ds_->h);

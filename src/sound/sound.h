@@ -20,6 +20,19 @@ struct Packet {
     uint32_t used = 0;
 };
 
+constexpr uint32_t kEarLength = 64;  // past the longest interaural delay, 31 samples
+// a voice's levels: rows are its channels, or for a mono 3D voice the two ears and the voice itself
+constexpr uint32_t kRows = 3;
+constexpr uint32_t kLeftEar = 0;
+constexpr uint32_t kRightEar = 1;
+constexpr uint32_t kDry = 2;
+constexpr uint32_t kOuts = 2;  // host left and right
+
+// levels of a voice's rows on the host outputs
+struct Gains {
+    float out[kRows][kOuts] = {};
+};
+
 struct Voice {
     uint32_t obj = 0;
     bool stream = false;
@@ -47,11 +60,22 @@ struct Voice {
     bool is3d = false;
     uint32_t mode = 0;  // DS3DMODE: 1 head relative, 2 disabled
     float p[3] = {}, min_dist = 1, max_dist = 1e9f;
-    float gain[2][2] = {};  // the last block's levels, the next block ramps from them
+    Gains gain;  // the last block's levels, the next block ramps from them
     bool has_gain = false;
+    // a mono 3D voice's interaural delay in samples and its recent samples
+    float itd = 0;
+    float ear[kEarLength] = {};
+    uint32_t ear_pos = 0;
     // ADPCM block cache
     int64_t block = -1;
     int16_t decoded[65 * 8];
+};
+
+// a 3D voice as the library's 3D pass sees it
+struct Place {
+    bool on = false;
+    float att = 1;
+    float azimuth = 0;
 };
 
 struct Done {
