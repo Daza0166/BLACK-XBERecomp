@@ -10,6 +10,7 @@
 #include <mutex>
 #include <vector>
 
+#include "sound/reverb.h"
 #include "xdk/hle.h"
 
 namespace sound {
@@ -31,6 +32,7 @@ constexpr uint32_t kOuts = 2;  // host left and right
 // levels of a voice's rows on the host outputs
 struct Gains {
     float out[kRows][kOuts] = {};
+    float send[kRows] = {};  // into the reverb
 };
 
 struct Voice {
@@ -92,6 +94,11 @@ inline std::condition_variable_any g_done_cv;
 inline std::atomic<int64_t> g_pumped{0};          // the last DirectSoundDoWork, steady ms
 inline bool g_started = false;
 inline uint32_t g_ds = 0;
+// BkXboxFx.bin's reverb (effect 16) reads its input from mix bin 11 alone
+constexpr uint32_t kSends = 1u << 11;
+// IDirectSound_SetMixBinHeadroom, a step halves the bin
+inline uint8_t g_bin_headroom[32] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0};
 
 inline float Db(int32_t hundredths) { return hundredths <= -10000 ? 0.0f : std::pow(10.0f, hundredths / 2000.0f); }
 

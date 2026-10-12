@@ -82,13 +82,31 @@ HLE_STDCALL(IDirectSound_GetSpeakerConfig, 2) {
 }
 HLE_STDCALL(IDirectSound_SetEffectData, 6) { return 0; }
 HLE_STDCALL(IDirectSound_EnableHeadphones, 2) { return 0; }
-HLE_STDCALL(IDirectSound_SetMixBinHeadroom, 3) { return 0; }
+// (this, mix bin, headroom)
+HLE_STDCALL(IDirectSound_SetMixBinHeadroom, 3) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    if (a[1] < 32) g_bin_headroom[a[1]] = a[2] & 7;
+    return 0;
+}
 HLE_STDCALL(IDirectSound_CommitDeferredSettings, 1) { return 0; }
 HLE_STDCALL(IDirectSound_SetDopplerFactor, 3) { return 0; }
 HLE_STDCALL(IDirectSound_SetRolloffFactor, 3) { return 0; }
 HLE_STDCALL(IDirectSound_SetDistanceFactor, 3) { return 0; }
 HLE_STDCALL(IDirectSound_SetVelocity, 5) { return 0; }
-HLE_STDCALL(IDirectSound_SetI3DL2Listener, 3) { return 0; }
+// (this, DSI3DL2LISTENER, apply): room, room HF, reflections and reverb are integers
+HLE_STDCALL(IDirectSound_SetI3DL2Listener, 3) {
+    if (!a[1]) return 0;
+    float p[12];
+    for (int i = 0; i < 12; i++) {
+        uint32_t v = R32(a[1] + i * 4);
+        p[i] = i < 2 || i == 5 || i == 7 ? float(int32_t(v)) : F32(v);
+    }
+    LOG_FIRST(32, "dsound: listener room %.0f reflections %.0f after %.3f s, reverb %.0f after %.3f s, decay %.2f s",
+              p[0], p[5], p[6], p[7], p[8], p[3]);
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_reverb.Set(p);
+    return 0;
+}
 HLE_STDCALL(IDirectSound_SetPosition, 5) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     for (int i = 0; i < 3; i++) g_listener[i] = F32(a[1 + i]);
@@ -120,7 +138,7 @@ HLE_STDCALL(IDirectSound_SynchPlayback, 1) {
     return 0;
 }
 
-// Effects run on the console's DSP and are not reproduced.
+// Effects run on the console's DSP, of those only the I3DL2 reverb is reproduced.
 // the descriptor keeps the image's effect list so the title finds its indices, every segment points at zeroed memory
 static uint32_t EffectsDesc(const std::vector<uint8_t>& img, const char* name) {
     XDK_REQUIRE("dsound", XDK_KEY(EffectsImage_Skip0), XDK_KEY(EffectsImage_Skip1), XDK_KEY(EffectsImage_Desc));

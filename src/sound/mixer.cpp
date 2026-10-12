@@ -150,8 +150,9 @@ void PlaceBin(uint32_t bin, float x, float g[kOuts]) {
     if (bin == 2 || (bin & 1)) g[1] = std::max(g[1], x);
 }
 
-// Gain of each row on host left and right. Rows are the voice's channels, or the two ears and the voice itself
-// for a mono 3D voice. A hardware voice holds two channels and owns a run of slots, which alternate between them.
+// Gain of each row on host left and right and into the reverb.
+// Rows are the voice's channels, or the two ears and the voice itself for a mono 3D voice. A hardware voice
+// holds two channels and owns a run of slots, which alternate between them.
 Gains Levels(const Voice& v, const Place& at) {
     static const uint8_t kFront[2] = {0, 1};
     const uint8_t* bin = v.nbins ? v.bin : kFront;
@@ -166,9 +167,14 @@ Gains Levels(const Voice& v, const Place& at) {
     for (uint32_t c = 0; c < v.channels && c < 2; c++) {
         for (uint32_t s = c; s < per && s < n; s += step) {
             uint32_t b = bin[s];
-            if (speakers && (b == 3 || b > 9)) continue;  // sub and effect sends
             float x = Db(v.bin_mb[b]) * v.volume * v.headroom * BinScale(at, b);
-            float* row = g.out[RowOf(at, v, c, b)];
+            uint32_t r = RowOf(at, v, c, b);
+            if (kSends >> b & 1) {
+                g.send[r] += std::ldexp(x, -g_bin_headroom[b]);
+                continue;
+            }
+            if (speakers && (b == 3 || b > 9)) continue;  // sub and other effect sends
+            float* row = g.out[r];
             if (speakers) {
                 PlaceBin(b, x, row);
                 continue;
@@ -179,9 +185,11 @@ Gains Levels(const Voice& v, const Place& at) {
         }
     }
     // a sound placed at NaN goes silent alone; its NaN gain would silence the whole mix
-    for (uint32_t r = 0; r < kRows; r++)
+    for (uint32_t r = 0; r < kRows; r++) {
         for (uint32_t o = 0; o < kOuts; o++)
             if (!std::isfinite(g.out[r][o])) g.out[r][o] = 0;
+        if (!std::isfinite(g.send[r])) g.send[r] = 0;
+    }
     return g;
 }
 
@@ -190,15 +198,19 @@ Gains UpdateRamp(Voice& v, const Gains& g, uint32_t frames) {
     if (!v.has_gain) v.gain = g;
     v.has_gain = true;
     Gains step;
-    for (uint32_t r = 0; r < kRows; r++)
+    for (uint32_t r = 0; r < kRows; r++) {
         for (uint32_t o = 0; o < kOuts; o++) step.out[r][o] = (g.out[r][o] - v.gain.out[r][o]) / float(frames);
+        step.send[r] = (g.send[r] - v.gain.send[r]) / float(frames);
+    }
     return step;
 }
 
 // the next frame's levels, a step along the ramp
 void StepGains(Gains& gain, const Gains& step) {
-    for (uint32_t r = 0; r < kRows; r++)
+    for (uint32_t r = 0; r < kRows; r++) {
         for (uint32_t o = 0; o < kOuts; o++) gain.out[r][o] += step.out[r][o];
+        gain.send[r] += step.send[r];
+    }
 }
 
 // the 3D voice's recent samples, the ear further from the sound reads them later
@@ -269,8 +281,8 @@ bool BufferFrame(Voice& v, float s[2]) {
     return true;
 }
 
-// one voice's block into the mix
-void MixVoice(Voice& v, float* out, uint32_t frames) {
+// one voice's block into the mix and the reverb send
+void MixVoice(Voice& v, float* out, float* send, uint32_t frames) {
     Place at = Locate(v);
     Gains g = Levels(v, at);
     bool ears = at.on && v.channels == 1;
@@ -291,8 +303,10 @@ void MixVoice(Voice& v, float* out, uint32_t frames) {
         }
         StepGains(v.gain, dg);
         float* frame = out + i * kOuts;
-        for (uint32_t r = 0; r < kRows; r++)
+        for (uint32_t r = 0; r < kRows; r++) {
             for (uint32_t o = 0; o < kOuts; o++) frame[o] += s[r] * v.gain.out[r][o];
+            send[i] += s[r] * v.gain.send[r];
+        }
         v.pos += step;
     }
     v.gain = g;
@@ -301,11 +315,14 @@ void MixVoice(Voice& v, float* out, uint32_t frames) {
 
 void Render(float* out, uint32_t frames) {
     std::memset(out, 0, frames * kOuts * sizeof(float));
+    static std::vector<float> send;  // the output thread alone renders
+    send.assign(frames, 0.0f);
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     for (auto& [obj, v] : g_voices) {
         if (v.paused || v.sync || (!v.stream && !v.playing)) continue;
-        MixVoice(v, out, frames);
+        MixVoice(v, out, send.data(), frames);
     }
+    g_reverb.Run(send.data(), out, frames);
     for (uint32_t i = 0; i < frames * kOuts; i++) out[i] = std::clamp(out[i], -1.0f, 1.0f);
 }
 
