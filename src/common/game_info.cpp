@@ -63,6 +63,13 @@ void Pad(int port, input::Pad& pad) {
     else if (port == 0) input::Keyboard(pad);
 }
 
+// no vibration while the keyboard and mouse are in use
+void Rumble(int port, uint16_t& left, uint16_t& right) {
+    if (port != 0 || !input::KeyboardActive()) return;
+    left = 0;
+    right = 0;
+}
+
 // what the options list cannot hold
 void Load(const void* table) {
     const toml::table& t = *static_cast<const toml::table*>(table);
@@ -117,5 +124,5 @@ const app::GameInfo app::kGame = {
     .message = game::Message,
     .ui = app::DrawUi,
     .pad = game::Pad,
-    .rumble = nullptr,
+    .rumble = game::Rumble,
 };
