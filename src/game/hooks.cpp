@@ -357,6 +357,33 @@ void RagdollLookAhead(X86Context& ctx, uint8_t*) {
     if (float share = FrameShare(); share > 0) ctx.xmm[0].f[0] /= share;
 }
 
+// Glass shards (0x1690D0, 0x110 bytes each) move, turn and count down once a frame of the game's frame rate
+constexpr uint32_t kShardAngle = 0xF4;
+static bool g_shard_tick;
+X86_EXTERN_FUNC(__imp__sub_001690D0);
+X86_FUNC(sub_001690D0) {
+    static float ticks;
+    ticks += FrameShare();
+    g_shard_tick = ticks >= 1;
+    if (g_shard_tick) ticks -= 1;
+    __imp__sub_001690D0(ctx, base);
+}
+bool ShardTick(X86Context&, uint8_t*) { return g_shard_tick; }
+
+// xmm1 the gain of a shard's turn a frame
+void ShardSpinGain(X86Context& ctx, uint8_t*) { ctx.xmm[1].f[0] *= FrameShare(); }
+
+// xmm1 the new turn a frame: the angle takes a share of it
+void ShardTurn(X86Context& ctx, uint8_t*) {
+    ctx.xmm[0].f[0] = G<float>(ctx.ebx + kShardAngle) + ctx.xmm[1].f[0] * FrameShare();
+}
+
+// xmm0 the gain of a shard's move a frame, then the new move
+void ShardStep(X86Context& ctx, uint8_t*) {
+    float share = FrameShare();
+    for (int i = 0; i < 4; i++) ctx.xmm[0].f[i] *= share;
+}
+
 // LOD and draw distances reach this many times farther: each compare sees a distance that much shorter or a
 // limit that much longer. Characters, props, pickups, ground cover, particles and bullet holes
 static float Reach() { return float(std::clamp(game::Opt().draw_distance, 1u, 8u)); }

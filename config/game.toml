@@ -379,6 +379,32 @@ at = 0xE056D
 call = "RagdollLookAhead"
 
 [[hook]]
+at = 0x169160
+call = "ShardTick"
+on_false = 0x169167
+
+[[hook]]
+at = 0x1691CF
+call = "ShardTick"
+on_false = 0x1691D0
+
+[[hook]]
+at = 0x169368
+call = "ShardSpinGain"
+
+[[hook]]
+at = 0x1693A2
+call = "ShardTurn"
+
+[[hook]]
+at = 0x1693ED
+call = "ShardStep"
+
+[[hook]]
+at = 0x1693FB
+call = "ShardStep"
+
+[[hook]]
 at = 0x17B239
 call = "ReloadBlur"
 on_false = 0x17B3AA
