@@ -1,6 +1,7 @@
 // 2D is drawn 640x480 and shown as wide as the output. The game narrows its Flash menus itself; what its own 2D
 // layer draws gets x' = x * narrow + anchor * spare width: HUD parts by their component's anchor, the rest 4:3 in
 // the middle.
+#include <cmath>
 #include <mutex>
 #include <vector>
 
@@ -23,6 +24,7 @@ constexpr float kOff = -1, kCentre = 0.5f;
 
 float g_anchor = kOff, g_width = 640;
 uint32_t g_hud = 0;  // the player's HUD while its list draws
+float g_inset = 0;   // 640x480 pixels a sprite's uv is pulled in by at each edge
 
 // The game takes the screen's shape once at boot: its flag, the view and the Flash stage follow the output.
 // View width: the game's 1 on 4:3 and 1.2 on 16:9, past that the 16:9 height of view is kept
@@ -56,6 +58,59 @@ void Emit(X86Context& ctx, uint8_t* base, uint32_t count, F emit) {
     for (uint32_t i = 0; i < count; i++) G<float>(points + i * 8) = saved[i];
 }
 
+// Upscaled, a sprite's outer pixels sample up to half a texel past its edge texels and the filter blends in what lies
+// next to it in the HUD texture (thin lines); its uv is pulled in to where 480p samples
+float PullIn(float from, float to, float length) {
+    if (length <= 0) return from;
+    return from + (to - from) / length * g_inset;
+}
+
+// corner b's u and v lie across the quad from corner a's
+void InsetQuads(const float* xy, float* uv, uint32_t quads) {
+    for (uint32_t q = 0; q < quads; q++, xy += 4, uv += 4) {
+        float w = std::fabs(xy[2] - xy[0]);
+        float h = std::fabs(xy[3] - xy[1]);
+        float u = uv[0];
+        float v = uv[1];
+        uv[0] = PullIn(u, uv[2], w);
+        uv[1] = PullIn(v, uv[3], h);
+        uv[2] = PullIn(uv[2], u, w);
+        uv[3] = PullIn(uv[3], v, h);
+    }
+}
+
+// the point of a 4 point strip sharing point i's other coordinate, -1 if none
+int Partner(const float* uv, int i, int axis) {
+    int other = 1 - axis;
+    for (int j = 0; j < 4; j++) {
+        bool shares = uv[j * 2 + other] == uv[i * 2 + other];
+        if (shares && uv[j * 2 + axis] != uv[i * 2 + axis]) return j;
+    }
+    return -1;
+}
+
+// a rotated sprite: each point's u moves toward the point sharing its v, and v toward the one sharing its u
+void InsetStrip(const float* xy, float* uv) {
+    float in[8];
+    std::copy(uv, uv + 8, in);
+    for (int i = 0; i < 4; i++) {
+        for (int axis = 0; axis < 2; axis++) {
+            int j = Partner(in, i, axis);
+            if (j < 0) continue;
+            float length = std::hypot(xy[j * 2] - xy[i * 2], xy[j * 2 + 1] - xy[i * 2 + 1]);
+            uv[i * 2 + axis] = PullIn(in[i * 2 + axis], in[j * 2 + axis], length);
+        }
+    }
+}
+
+// An emitter's uv pairs at [esp+0xC], put back after the call: the game's own tables hold them
+struct SavedUv {
+    float* uv;
+    std::vector<float> saved;
+    SavedUv(X86Context& ctx, uint32_t pairs) : uv(&G<float>(R32(ctx.esp + 0xC))), saved(uv, uv + pairs * 2) {}
+    ~SavedUv() { std::copy(saved.begin(), saved.end(), uv); }
+};
+
 }  // namespace
 
 // textured quads and solid quads, two corners each
@@ -63,7 +118,13 @@ X86_EXTERN_FUNC(__imp__sub_000D6C00);
 static bool g_film = false;
 // the film quad covers the frame: 4:3 in the middle
 X86_FUNC(sub_000D6C00) {
-    if (!g_film || !game::Wide()) return Emit(ctx, base, R32(ctx.esp + 8) * 2, __imp__sub_000D6C00);
+    uint32_t quads = R32(ctx.esp + 8);
+    if (!g_film && g_inset > 0) {
+        SavedUv uv(ctx, quads * 2);
+        InsetQuads(&G<float>(ctx.eax), uv.uv, quads);
+        return Emit(ctx, base, quads * 2, __imp__sub_000D6C00);
+    }
+    if (!g_film || !game::Wide()) return Emit(ctx, base, quads * 2, __imp__sub_000D6C00);
     float* q = &G<float>(ctx.eax);
     float saved[4] = {q[0], q[1], q[2], q[3]}, k = game::Narrow(), pad = (q[0] + q[2]) * (1 - k) / 2;
     q[0] = q[0] * k + pad;
@@ -81,7 +142,13 @@ X86_EXTERN_FUNC(__imp__sub_000D6AA0);
 X86_FUNC(sub_000D6AA0) { Emit(ctx, base, R32(ctx.esp + 8) * 2, __imp__sub_000D6AA0); }
 // textured strip
 X86_EXTERN_FUNC(__imp__sub_000D6850);
-X86_FUNC(sub_000D6850) { Emit(ctx, base, R32(ctx.esp + 8), __imp__sub_000D6850); }
+X86_FUNC(sub_000D6850) {
+    uint32_t points = R32(ctx.esp + 8);
+    if (points != 4 || g_inset <= 0) return Emit(ctx, base, points, __imp__sub_000D6850);
+    SavedUv uv(ctx, points);
+    InsetStrip(&G<float>(ctx.eax), uv.uv);
+    Emit(ctx, base, points, __imp__sub_000D6850);
+}
 
 // Begin. Left alone: the Flash player's, the host's, a smaller target's
 X86_EXTERN_FUNC(__imp__sub_000D99A0);
@@ -94,12 +161,15 @@ X86_FUNC(sub_000D99A0) {
     bool screen = display && width == R32(display) && from != kFromFlash && from != kFromHost;
     g_anchor = screen && game::Wide() ? kCentre : kOff;
     g_width = float(width);
+    bool native = from != kFromFlash && from != kFromHost;
+    g_inset = native ? std::max(0.0f, 0.5f - 0.5f / app::RenderScale(480)) : 0;
 }
 
 // End
 X86_EXTERN_FUNC(__imp__sub_000D3740);
 X86_FUNC(sub_000D3740) {
     g_anchor = kOff;
+    g_inset = 0;
     __imp__sub_000D3740(ctx, base);
 }
 
