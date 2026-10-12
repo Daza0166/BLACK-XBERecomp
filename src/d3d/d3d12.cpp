@@ -536,7 +536,7 @@ private:
     float tex_k_[4] = {1, 1, 1, 1};  // Extension::Sample's k
     float tex_wide_[4] = {};  // host texels per console texel of a target read into a smaller one, 0 otherwise
     bool tex_blur_[4] = {};   // tex_wide_ for a blur between small targets
-    uint32_t Samplers(const State& s, const TexInfo info[4]);
+    uint32_t Samplers(const State& s, const TexInfo info[4], const D3D12_SHADER_RESOURCE_VIEW_DESC sv[4]);
     ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
     ID3D12PipelineState* Pipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
     ID3D12PipelineState* BlitPipeline(DXGI_FORMAT rtv, bool over, uint32_t samples);
@@ -1641,7 +1641,7 @@ ID3D12Resource* D3D12Backend::BindTexture(const State& s, int stage, TexInfo& in
     return tx.res.Get();
 }
 
-uint32_t D3D12Backend::Samplers(const State& s, const TexInfo info[4]) {
+uint32_t D3D12Backend::Samplers(const State& s, const TexInfo info[4], const D3D12_SHADER_RESOURCE_VIEW_DESC sv[4]) {
     D3D12_SAMPLER_DESC sd[4] = {};
     uint32_t aniso = app::Get().aniso;
     for (int i = 0; i < 4; i++) {
@@ -1653,7 +1653,9 @@ uint32_t D3D12Backend::Samplers(const State& s, const TexInfo info[4]) {
         D3D12_FILTER_TYPE fmip = mip == 2 ? D3D12_FILTER_TYPE_LINEAR : D3D12_FILTER_TYPE_POINT;
         sd[i].Filter = D3D12_FILTER(fmin << 4 | fmag << 2 | fmip);
         uint32_t an = min == 3 || mag == 3 ? std::max<uint32_t>(t[kTssMaxAnisotropy], 1) : 1;
-        if (aniso && lin(min) && !info[i].shadow) an = aniso;
+        // forced only where the title filters across mip levels and the texture has them
+        bool mipped = mip && sv[i].Texture2D.MipLevels > 1;
+        if (aniso && lin(min) && mipped && !info[i].shadow) an = aniso;
         if (an > 1) {
             sd[i].Filter = D3D12_FILTER_ANISOTROPIC;
             sd[i].MaxAnisotropy = std::min<uint32_t>(an, 16);
@@ -1990,7 +1992,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t 
         dev_->CreateShaderResourceView(res[i], &sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
     }
     cl_->SetGraphicsRootDescriptorTable(2, Gpu(srv_heap_.Get(), slot, srv_inc_));
-    cl_->SetGraphicsRootDescriptorTable(3, Gpu(smp_heap_.Get(), Samplers(s, info), smp_inc_));
+    cl_->SetGraphicsRootDescriptorTable(3, Gpu(smp_heap_.Get(), Samplers(s, info, sv), smp_inc_));
 
     // viewport covers the target, the guest viewport is in the shader; scissor clips to it
     float W = float(bound_rt_ ? bound_rt_->w : bound_ds_->w), H = float(bound_rt_ ? bound_rt_->h : bound_ds_->h);
