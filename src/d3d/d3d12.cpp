@@ -182,6 +182,57 @@ float2 occlusion(float4 pos : SV_Position) : SV_Target {
     }
     return float2(max(1 - a * 0.25, 0), c.z);
 }
+static const float kHalfPi = 1.5707963;
+// GTAO (Jimenez 2016) at XeGTAO's high preset: 3 slices, 3 steps a side, squared step spread, falloff over the outer
+// 61.5% of the radius, power 2.2. Per slice the highest horizon each side, the visible arc between integrated against
+// the normal projected into the slice
+float2 gtao(float4 pos : SV_Position) : SV_Target {
+    float3 c = View(pos.xy);
+    float2 rad = opt.x * 0.5 * vp.zw / (proj.xy * c.z);
+    float span = max(rad.x, rad.y);
+    if (span < 1) return float2(1, c.z);
+    float3 n = Normal(pos.xy, c);
+    float3 v = normalize(-c);
+    float k = min(1, opt.y / span);
+    float R = opt.x * k;
+    int2 cell = int2(pos.xy) & 3;
+    float slice_noise = kDither[cell.y * 4 + cell.x] / 16;
+    float step_noise = kDither[cell.x * 4 + cell.y] / 16;
+    float vis = 0;
+    for (int s = 0; s < 3; s++) {
+        float phi = (s + slice_noise) * (kHalfPi * 2 / 3);
+        float3 dir = float3(cos(phi), sin(phi), 0);
+        // in pixels; screen y runs down, view y up
+        float2 omega = float2(dir.x, -dir.y) * rad * k;
+        float3 ortho = dir - dot(dir, v) * v;
+        float3 axis = normalize(cross(ortho, v));
+        float3 pn = n - axis * dot(n, axis);
+        float pn_len = max(length(pn), 1e-4);
+        float cos_n = saturate(dot(pn, v) / pn_len);
+        float an = sign(dot(ortho, pn)) * acos(cos_n);
+        // x: the +omega side, y: the -omega side; lowest is flat along the slice's tangent
+        float2 low = float2(cos(an + kHalfPi), cos(an - kHalfPi));
+        float2 hc = low;
+        for (int j = 0; j < 3; j++) {
+            float f = (j + step_noise) / 3;
+            // at least 1.3 pixels out, off the centre pixel
+            float2 off = omega * (f * f + 1.3 / length(omega));
+            float3 d0 = View(pos.xy + off) - c;
+            float3 d1 = View(pos.xy - off) - c;
+            float2 len = max(float2(length(d0), length(d1)), 1e-4);
+            float2 w = saturate((R - len) / (R * 0.615));
+            float2 sc = float2(dot(d0, v), dot(d1, v)) / len;
+            hc = max(hc, lerp(low, sc, w));
+        }
+        float h0 = an + clamp(-acos(hc.y) - an, -kHalfPi, kHalfPi);
+        float h1 = an + clamp(acos(hc.x) - an, -kHalfPi, kHalfPi);
+        float sin_n = sin(an);
+        float arc0 = (cos_n + 2 * h0 * sin_n - cos(2 * h0 - an)) / 4;
+        float arc1 = (cos_n + 2 * h1 * sin_n - cos(2 * h1 - an)) / 4;
+        vis += pn_len * (arc0 + arc1);
+    }
+    return float2(pow(saturate(vis / 3), 2.2), c.z);
+}
 // opt.zw: step; 5 taps average the 4 pixel dither, depth edges left out
 float Smooth(float2 pos, out float z) {
     int2 p = int2(pos);
@@ -977,11 +1028,12 @@ void D3D12Backend::Occlusion(const State& s, const float p[8]) {
         fprintf(cap_, "%04u occlusion rt %08X ds %08X\n", cap_i_++, s.rt.data, s.zs.data);
     }
     uint32_t samples = Ms(*ds);
-    LOG_FIRST(1, "d3d12: ambient occlusion %ux%u, %u samples, projection %.4f %.4f, view z %.6f / (depth - %.8f)",
-              rt->w, rt->h, samples, 1 / p[0], 1 / p[1], p[4], p[5]);
+    LOG_FIRST(1, "d3d12: ambient occlusion %s %ux%u, %u samples, projection %.4f %.4f, view z %.6f / (depth - %.8f)",
+              p[6] ? "GTAO" : "SSAO", rt->w, rt->h, samples, 1 / p[0], 1 / p[1], p[4], p[5]);
     float c[16];
     OcclusionConstants(v, rect, p, c);
-    AoPass raw{"occlusion", kAoFormat, 1, false, OcclusionView(0), ds->res.Get(), samples > 1, nullptr, 0, 0};
+    const char* entry = p[6] ? "gtao" : "occlusion";
+    AoPass raw{entry, kAoFormat, 1, false, OcclusionView(0), ds->res.Get(), samples > 1, nullptr, 0, 0};
     AoPass across{"occlusion_blur", kAoFormat, 1, false, OcclusionView(1), nullptr, false, ao_[0].Get(), 1, 0};
     D3D12_CPU_DESCRIPTOR_HANDLE scene = Cpu(rtv_heap_.Get(), rt->view, rtv_inc_);
     AoPass down{"occlusion_apply", rt->fmt, Ms(*rt), true, scene, nullptr, false, ao_[1].Get(), 0, 1};

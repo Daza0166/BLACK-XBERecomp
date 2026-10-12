@@ -9,6 +9,6 @@ constexpr uint32_t kOcclusionRects = 2;
 }  // namespace gpu
 
 namespace d3d {
-// m: the camera to screen matrix, row vectors, as SetTransform takes it
-void Occlusion(const float* m);
+// m: the camera to screen matrix, row vectors, as SetTransform takes it; gtao: GTAO, else SSAO
+void Occlusion(const float* m, bool gtao);
 }  // namespace d3d

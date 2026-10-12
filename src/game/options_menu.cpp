@@ -35,6 +35,30 @@ constexpr int kEntries = int(std::size(kCaptions)), kSlots = 8, kDepth = 100;
 constexpr int kEscape = 0x1B;
 const Row kPageRow{app::rows::Kind::Value, -1, "PAGE"};
 
+// the selection bar, Main.ButtonSelector: its parts by depth; once shown it stops on frame 10, data +0x18 9
+constexpr int kBarRest = 9;
+constexpr int kBarBox = 1;
+constexpr int kBarLine = 5;
+constexpr int kBarTick = 7;
+constexpr int kBarScan = 11;
+constexpr float kBarLeft = -5.0f;  // the box's left end and the left tick
+constexpr float kTickGap = 10.0f;  // past the end of the widest value
+
+// the rows' font, as the name entry's caret measures it
+constexpr uint32_t kFonts = 0x2D45F0;
+constexpr uint32_t kFindFont = 0x13CD0;   // stdcall (fonts, name): a font
+constexpr uint32_t kFontName = 0x28E63C;  // "Eurostile LT Std"
+constexpr float kTextHeight = 15.0f;      // the stock buttons' text fields
+constexpr float kTextLeft = 2.0f;         // the text field in its button's label clip
+
+// the stock bar on frame 10: its box's x scale, the x of its right tick, right line and Scan
+struct Bar {
+    float box;
+    float tick;
+    float line;
+    float scan;
+};
+
 // an options page of the game
 struct Host {
     const char* page;
@@ -47,16 +71,19 @@ struct Host {
     float pitch, name_x, value_x, scale;  // the rows, from the stock button
     const char* hint;          // the string of a prompt our button takes the place of
     const char* stock[14];     // what the rows take the place of
+    Bar bar;
 };
 constexpr Host kHosts[] = {
     {"OptionsMenuXbox", "TextAnim", "_level4.Main.TextAnim.ControllerSetup_Text", "Playerprofile_Text", 25.0f,
      "controllerButton", "Playerprofile", 2, 25.0f, -37.0f, 185.0f, 0.9f, nullptr,
-     {"ControllerSetup_Text", "SoundSetup_Text", "PictureSetup_Text", "Playerprofile_Text"}},
+     {"ControllerSetup_Text", "SoundSetup_Text", "PictureSetup_Text", "Playerprofile_Text"},
+     {1.0f, 245.0f, 445.0f, -5.0f}},
     {"PauseMenuOptionXbox", nullptr, "_level4.Main.ToggleCrouch", "ToggleCrouch", 222.0f,
      "toggleCrouchButton", "musicVolumeButton", 1, 27.0f, 0.0f, 245.0f, 1.0f, "$FE_SELECT",
      {"ToggleCrouch", "ToggleCrouchOn_Text", "ToggleCrouchOff_Text", "InvertLook", "InvertLookOn_Text",
       "InvertLookOff_Text", "Vibration", "VibrationOn_Text", "VibrationOff_Text", "SFXVolume", "Sound_Volume",
-      "MusicVolume", "Music_Volume"}},
+      "MusicVolume", "Music_Volume"},
+     {1.4f, 343.55f, 443.55f, 168.35f}},
 };
 
 // a text the page shows from here: its string id, the text, the data of the field showing it
@@ -298,6 +325,73 @@ bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
     return true;
 }
 
+// what row i of the page shows as its value
+std::string ValueText(const Page& p, size_t i) {
+    const Row* row = p.rows[i];
+    if ((p.capture == 1 || p.capture == 2) && p.bind == i) return "PRESS A KEY";
+    if (row == &kPageRow) return kCaptions[p.mode - 1];
+    return row ? app::rows::Value(*row) : " ";
+}
+
+// font +0x1C its last glyph, +0x20 its glyphs by code & 0x7F, each 0x28 bytes on with +0x1C the code
+uint32_t Glyph(uint32_t font, uint8_t code) {
+    uint32_t glyph = R32(font + 0x20 + (code & 0x7F) * 4);
+    uint32_t last = R32(font + 0x1C);
+    if (!glyph) return last;
+    for (int left = 256; G<uint16_t>(glyph + 0x1C) != code && glyph != last && left; left--) glyph += 0x28;
+    return glyph;
+}
+
+// a text's width at a height of 1, as 0xC3AF0: font +0x08 its size, +0x10 a spacing; glyph +0x08 width, +0x10
+// left, +0x18 advance, +0x20 spaced
+float Measure(uint32_t font, const std::string& text) {
+    if (!font || text.empty()) return 0.0f;
+    uint32_t glyph = Glyph(font, uint8_t(text[0]));
+    float x = -G<float>(glyph + 0x10);
+    for (size_t i = 1; i < text.size(); i++) {
+        x += G<float>(glyph + 0x18);
+        glyph = Glyph(font, uint8_t(text[i]));
+    }
+    float spacing = R32(glyph + 0x20) ? G<float>(font + 0x10) : 1.0f;
+    return G<float>(font + 0x08) * (x + G<float>(glyph + 0x10) + G<float>(glyph + 0x08) * spacing);
+}
+
+// how far right of the focused name the widest value of the page ends, the label clip at +0xC scaled as it lights
+float Reach(X86Context& ctx, const Page& p, uint32_t focus) {
+    const Host& h = *p.host;
+    uint32_t font = CallGuest(ctx, kFindFont, {R32(kFonts), kFontName});
+    uint32_t label = flash::FirstChild(focus);
+    float scale = h.scale * (label ? G<float>(label + 0xC) : 1.0f);
+    // capture text left out so the bar keeps its width while a key is bound
+    Page shown = p;
+    shown.capture = 0;
+    float widest = 0.0f;
+    for (size_t i = 0; i < p.rows.size(); i++) widest = std::max(widest, Measure(font, ValueText(shown, i)));
+    return h.value_x - h.name_x + (kTextLeft + widest * kTextHeight) * scale + kTickGap;
+}
+
+// the bar on the focused row reaches past the values, its ends and line as stock: +0xC x scale, +0x1C x
+void StretchBar(X86Context& ctx, const Page& p, uint32_t root, uint32_t focus) {
+    const Bar& stock = p.host->bar;
+    uint32_t bar = Member(ctx, Member(ctx, root, "Main"), "ButtonSelector");
+    if (flash::Type(bar) != 0xD) return;
+    uint32_t data = R32(bar + 0x48);
+    if (!data || data == 0xBAADF00D || R32(data + 0x18) != kBarRest) return;
+    float right = std::max(stock.tick, Reach(ctx, p, focus));
+    float stretch = (right - kBarLeft) / (stock.tick - kBarLeft);
+    int left = 256;
+    for (uint32_t part = flash::FirstChild(bar); part && left; part = R32(part + 0x50), left--) {
+        int depth = int32_t(R32(part + 0x54) << 15) >> 15;
+        if (depth == kBarBox) G<float>(part + 0xC) = stock.box * stretch;
+        if (depth == kBarLine) G<float>(part + 0x1C) = stock.line + right - stock.tick;
+        if (depth == kBarTick) G<float>(part + 0x1C) = right;
+        if (depth == kBarScan) {
+            G<float>(part + 0xC) = stretch;
+            G<float>(part + 0x1C) = kBarLeft + (stock.scan - kBarLeft) * stretch;
+        }
+    }
+}
+
 // front end: +0x44C the menu input of this tick, 1 to 6 up down left right confirm back, +0x454 input on, +0x455 held
 // off, +0x381C 2 once the page is ready, +0x3840 its name, +0x3884 another page asked for, +0x388C page leaving, 1 as
 // it goes
@@ -392,13 +486,13 @@ void Tick(X86Context& ctx, uint32_t ui) {
     Write(g_fields[kTitle], kCaptions[p.mode - 1]);
     for (size_t i = 0; i < p.slots; i++) {
         const Row* row = p.rows[p.top + i];
-        bool binding = (p.capture == 1 || p.capture == 2) && p.bind == p.top + i;
         Write(g_fields[kName + i], row ? row->label : "RESTORE DEFAULTS");
-        Write(g_fields[kValue + i], binding ? "PRESS A KEY" : row == &kPageRow ? kCaptions[p.mode - 1] : row ? app::rows::Value(*row) : " ");
+        Write(g_fields[kValue + i], ValueText(p, p.top + i));
         // a value lights up with its name: +0xC a clip's matrix, then its colours
         uint32_t from = flash::FirstChild(p.name[i]), to = flash::FirstChild(p.value[i]);
         if (from && to) std::memcpy(HostPtr(to + 0xC), HostPtr(from + 0xC), 0x38);
     }
+    if (slot < p.slots) StretchBar(ctx, p, root, focus);
 }
 
 }  // namespace

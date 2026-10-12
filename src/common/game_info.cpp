@@ -107,7 +107,7 @@ const app::GameInfo app::kGame = {
                 {"walk_speed", nullptr, &game::Opt().walk_speed}, {"fov", nullptr, &game::Opt().fov},
                 {"msaa", nullptr, &game::Opt().msaa},
                 {"draw_distance", nullptr, &game::Opt().draw_distance},
-                {"ambient_occlusion", &game::Opt().ambient_occlusion, nullptr},
+                {"ambient_occlusion", nullptr, &game::Opt().ambient_occlusion},
                 {"viewmodel_fov", nullptr, &game::Opt().viewmodel_fov}},
     .load = game::Load,
     .save = game::Save,

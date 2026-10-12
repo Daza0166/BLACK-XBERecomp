@@ -11,7 +11,7 @@ struct Options {
     bool skip_intros = false;  // logos at boot and the film after pressing start
     bool fps_counter = false;
     bool reload_blur = true;
-    bool ambient_occlusion = false;  // screen space, from the scene's depth
+    uint32_t ambient_occlusion = 0;  // screen space, from the scene's depth: 0 off, 1 SSAO, 2 GTAO
     uint32_t msaa = 0;  // samples a pixel of the scene, 0 off
     uint32_t draw_distance = 1;  // times the game's LOD and draw distances
     float mouse_sensitivity = 1.0f;

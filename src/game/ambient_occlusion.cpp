@@ -14,5 +14,6 @@ constexpr uint32_t kProjection = 0x297720;  // camera to screen, written only by
 
 // before the frame's call that sorts and draws list 2, the alpha blended meshes
 void AmbientOcclusion(X86Context&, uint8_t*) {
-    if (game::Opt().ambient_occlusion) d3d::Occlusion(&G<float>(kProjection));
+    uint32_t mode = game::Opt().ambient_occlusion;
+    if (mode) d3d::Occlusion(&G<float>(kProjection), mode == 2);
 }
