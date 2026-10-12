@@ -64,6 +64,7 @@ static void FlushStream(Voice& v) {
         t_flushed.push_back(*it);
         it = g_done.erase(it);
     }
+    Deactivate(v);
 }
 
 STREAM(AddRef, 1) { return uint32_t(++v.refs); }
@@ -100,14 +101,21 @@ STREAM(Process, 3) {
     if (pk.completed_ptr) W32(pk.completed_ptr, 0);
     if (pk.status_ptr) W32(pk.status_ptr, kPacketPending);
     v.packets.push_back(pk);
+    v.active = true;
+    v.ending = false;
     return 0;
 }
-STREAM(Discontinuity, 1) { return 0; }
+STREAM(Discontinuity, 1) {
+    if (!v.packets.empty()) v.ending = true;
+    else if (v.active) FlushStream(v);
+    return 0;
+}
 STREAM(Flush, 1) {
     FlushStream(v);
     return 0;
 }
 STREAM(FlushEx, 4) {
+    if (a[3] && !v.active) return 0;
     FlushStream(v);
     return 0;
 }

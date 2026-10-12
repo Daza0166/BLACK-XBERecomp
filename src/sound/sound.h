@@ -30,7 +30,9 @@ struct Voice {
     // buffer
     // play region in bytes from data, loop region in bytes from the play region
     uint32_t data = 0, bytes = 0, loop_start = 0, loop_len = 0, play_start = 0, play_len = 0;
+    uint32_t owned = 0;  // the buffer's own memory, made with it: freed by SetBufferData and Release
     bool playing = false, looping = false, paused = false;
+    bool active = false, ending = false;  // stream: took a packet since it went quiet, quiet again once they run out
     bool sync = false;  // held until IDirectSound_SynchPlayback
     double pos = 0;  // frames
     uint32_t freq = 0;
@@ -76,6 +78,11 @@ inline uint32_t FramesOf(const Voice& v, uint32_t bytes) {
 inline uint32_t BytesOf(const Voice& v, uint32_t frames) {
     if (v.tag == 0x69) return frames / 64 * 36 * v.channels;
     return frames * v.align;
+}
+
+// a stream goes quiet: a started one loses its pause
+inline void Deactivate(Voice& v) {
+    if (v.active) v.active = v.paused = v.ending = false;
 }
 
 inline Voice* Find(uint32_t obj) {

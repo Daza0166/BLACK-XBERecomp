@@ -17,7 +17,7 @@ static uint32_t NewBuffer(uint32_t desc, uint32_t out) {
     v.is3d = flags & 0x10;
     v.headroom = DefaultHeadroom(flags);
     if (bytes) {
-        v.data = mem::AllocContiguous(bytes, 0, 0xFFFFFFFF, 4);
+        v.data = v.owned = mem::AllocContiguous(bytes, 0, 0xFFFFFFFF, 4);
         v.bytes = v.play_len = v.loop_len = bytes;
     }
     W32(out, obj);
@@ -39,6 +39,7 @@ HLE_STDCALL(IDirectSound_CreateSoundBuffer, 4) { return NewBuffer(a[1], a[2]); }
 BUFFER(Release, 1) {
     if (--v.refs > 0) return uint32_t(v.refs);
     uint32_t obj = v.obj;
+    if (v.owned) mem::FreeContiguous(v.owned);
     g_voices.erase(obj);
     mem::FreeSystem(obj);
     return 0;
@@ -46,7 +47,12 @@ BUFFER(Release, 1) {
 BUFFER(Unlock, 5) { return 0; }
 BUFFER(SetBufferData, 3) {
     if (a[1] == v.data && a[2] == v.bytes) return 0;
+    if (v.owned != a[1]) {
+        if (v.owned) mem::FreeContiguous(v.owned);
+        v.owned = 0;
+    }
     v.data = a[1];
+    if (!a[1] && a[2]) v.data = v.owned = mem::AllocContiguous(a[2], 0, 0xFFFFFFFF, 4);  // a size with no data
     v.bytes = v.play_len = v.loop_len = a[2];
     v.play_start = v.loop_start = 0;
     v.pos = 0;

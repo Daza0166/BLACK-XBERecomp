@@ -148,6 +148,7 @@ void Render(float* out, uint32_t frames) {
                 }
                 if (v.packets.empty()) {
                     v.pos = 0;
+                    if (v.ending) Deactivate(v);
                     break;
                 }
                 Packet& pk = v.packets.front();
