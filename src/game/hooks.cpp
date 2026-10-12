@@ -5,6 +5,7 @@
 #include <thread>
 
 #include "app/app.h"
+#include "common/mouse_keyboard.h"
 #include "common/options.h"
 #include "core/input.h"
 #include "xdk/d3d8.h"
@@ -402,10 +403,10 @@ void DrawListRoom(X86Context&, uint8_t*) {
 // reload animations start the screen blur
 bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur; }
 
-// A or Start on any pad, on the press
+// A or Start on any pad, or the left mouse button, on the press
 static bool SkipPressed() {
     static bool held = true;
-    bool down = false;
+    bool down = input::LeftButton();
     for (int port = 0; port < 4; port++) {
         input::Pad pad = input::Poll(port);
         down |= pad.analog[0] || (pad.buttons & 0x10);

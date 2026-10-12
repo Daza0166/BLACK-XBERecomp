@@ -261,8 +261,10 @@ void Keyboard(Pad& p) {
         } else p.buttons |= uint16_t(1u << (b - 8));
     }
     pause_held = pause;
-    if (Down(VK_RETURN) || (!play && Down(VK_SPACE)) || NowMs() < g_confirm_until) p.analog[0] = 0xFF;
-    if (Down(VK_BACK)) p.analog[1] = 0xFF;
+    // Enter, Space and Backspace act in menus only; in play they do what they are bound to
+    bool confirm = !play && (Down(VK_RETURN) || Down(VK_SPACE));
+    if (confirm || NowMs() < g_confirm_until) p.analog[0] = 0xFF;
+    if ((!play && Down(VK_BACK)) || (g_menu && Down(VK_RBUTTON))) p.analog[1] = 0xFF;
     if (!play)
         for (int i = 0; i < 4; i++) p.buttons |= uint16_t(Down(kFixed[i]) << i);
     float speed = walk ? float(game::Opt().walk_speed) / 100.0f : 1.0f;
@@ -304,6 +306,8 @@ bool Cursor(float& x, float& y, bool& down) {
 }
 
 int TakeWheel() { return g_wheel.exchange(0); }
+
+bool LeftButton() { return Active() && !g_settle && Down(VK_LBUTTON); }
 
 void TapConfirm() { g_confirm_until = NowMs() + kTapMs; }
 
