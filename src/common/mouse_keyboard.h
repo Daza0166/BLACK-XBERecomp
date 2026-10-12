@@ -22,7 +22,8 @@ struct Action {
 };
 const Action* Actions(size_t* count);
 std::string Binding(size_t action);
-void Bind(size_t action, int vk);
+// slot 0 the key, 1 its alternate (the F10 panel's second box); vk 0 clears the slot. A key the other slot has moves.
+void Bind(size_t action, int vk, int slot = 0);
 void ResetBindings();
 void LoadBindings();     // after the settings load
 int PressedKey();        // a bindable key or mouse button held now, 0 for none

@@ -421,6 +421,8 @@ void RestoreDefaults(int page) {
 
 // the row being rebound, -1 when idle; its keys must be released before the next press binds
 std::atomic<int> g_capture{-1};
+int g_capture_slot = 0;  // its box: 0 the key, 1 the alternate
+int g_hovered_box = -1;  // the box under the mouse with a key in it, this frame
 bool g_capture_armed = false;
 int g_capture_done = 0;  // frame of the last bind, the key that bound must not start another
 int g_page = kSettingsPage;
@@ -449,24 +451,51 @@ void Apply() {
     Changed(true);
 }
 
-// label left, keys right; Enter or a click starts the capture
-bool BindRow(const char* label, const std::string& keys, bool capturing) {
+// the action's key and its alternate as their boxes show them, the alternate blank when there is none
+std::vector<std::string> KeyBoxes(size_t action) {
+    std::string keys = input::Binding(action);
+    size_t comma = keys.find(',');
+    std::string second;
+    if (comma != std::string::npos) second = keys.substr(comma + 1);
+    second = second.substr(0, second.find(','));
+    if (!second.empty()) second = KeyText(second);
+    return {KeyText(keys.substr(0, comma)), second};
+}
+
+constexpr float kKeyBoxEms = 10.0f;  // a key box's width when the row has two
+
+// label left, a box per key right (the key and its alternate side by side), ending where the other rows' values do;
+// Enter or a click on a box starts its capture, a right click sets `cleared`. The box pressed, -1 for none.
+int BindRow(const char* label, const std::vector<std::string>& keys, int capturing, int& cleared) {
     const ImGuiStyle& style = ImGui::GetStyle();
-    RowBox box = MeasureRow();
+    RowBox row = MeasureRow();
+    float value_end = row.row_x + row.row_w - row.block_w + row.row_h + style.ItemSpacing.x + row.value_w;
+    int n = int(keys.size());
+    int pressed = -1;
+    float box_w = n > 1 ? row.em * kKeyBoxEms : row.value_w;
     ImGui::PushID(label);
-    bool pressed = ImGui::Selectable("##row", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(box.row_w, box.row_h));
-    if (ImGui::IsItemFocused() || capturing) FillItem();
-    RowLabel(box, label);
-    std::string value = capturing ? std::string("PRESS A KEY") : keys;
-    float value_x = box.row_x + box.row_w - box.block_w + box.row_h + style.ItemSpacing.x;
-    float pad = (box.value_w - ImGui::CalcTextSize(value.c_str()).x) * 0.5f;
-    ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), box.row_y));
-    ImGui::AlignTextToFramePadding();
-    if (capturing) ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
-    ImGui::TextUnformatted(value.c_str());
-    if (capturing) ImGui::PopStyleColor();
+    RowLabel(row, label);
+    for (int i = 0; i < n; i++) {
+        float x = value_end - float(n - i) * box_w - float(n - 1 - i) * style.ItemSpacing.x;
+        ImGui::SetCursorPos(ImVec2(x, row.row_y));
+        ImGui::PushID(i);
+        if (ImGui::InvisibleButton("##key", ImVec2(box_w, row.row_h))) pressed = i;
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) cleared = i;
+        if (ImGui::IsItemHovered() && !keys[i].empty()) g_hovered_box = i;
+        bool lit = capturing == i || ImGui::IsItemFocused() || ImGui::IsItemHovered();
+        ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                                  ImGui::GetColorU32(lit ? ImGuiCol_Header : ImGuiCol_FrameBg));
+        std::string value = capturing == i ? std::string("PRESS A KEY") : keys[i];
+        float pad = (box_w - ImGui::CalcTextSize(value.c_str()).x) * 0.5f;
+        ImGui::SetCursorPos(ImVec2(x + std::max(pad, 0.0f), row.row_y));
+        ImGui::AlignTextToFramePadding();
+        if (capturing == i) ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+        ImGui::TextUnformatted(value.c_str());
+        if (capturing == i) ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
     ImGui::PopID();
-    EndRow(box);
+    EndRow(row);
     return pressed;
 }
 
@@ -479,7 +508,7 @@ void PollCapture() {
         return;
     }
     if (!vk) return;
-    if (vk != VK_ESCAPE) input::Bind(size_t(g_capture.load()), vk);
+    if (vk != VK_ESCAPE) input::Bind(size_t(g_capture.load()), vk, g_capture_slot);
     g_capture = -1;
     g_capture_done = ImGui::GetFrameCount();
 }
@@ -496,8 +525,12 @@ void ValueRow(const Row& r) {
 }
 
 void KeyRow(const Row& r) {
-    bool pressed = BindRow(r.label, KeyText(input::Binding(size_t(r.id))), g_capture == r.id);
-    if (!pressed || !CaptureFree()) return;
+    int cleared = -1;
+    int box = BindRow(r.label, KeyBoxes(size_t(r.id)), g_capture == r.id ? g_capture_slot : -1, cleared);
+    // only the alternate: an action left with no key at all could be the settings panel's own
+    if (cleared == 1 && g_capture < 0) input::Bind(size_t(r.id), 0, 1);
+    if (box < 0 || !CaptureFree()) return;
+    g_capture_slot = box;
     g_capture = r.id;
     g_capture_armed = false;
 }
@@ -561,7 +594,10 @@ void DrawTitle() {
 void DrawFooter(float em) {
     ImGui::Separator();
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextUnformatted(g_capture >= 0 ? "Press a key or mouse button to bind, Escape cancels" : "");
+    const char* hint = "";
+    if (g_capture >= 0) hint = "Press a key or mouse button to bind, Escape cancels";
+    else if (g_page == kKeyboardPage && g_hovered_box == 1) hint = "Right click clears the second key";
+    ImGui::TextUnformatted(hint);
     ImGui::PopStyleColor();
     float bw = em * 8;
     float buttons_pad = ImGui::GetContentRegionAvail().x - bw * 3 - ImGui::GetStyle().ItemSpacing.x * 2;
@@ -592,6 +628,7 @@ void DrawPanel() {
         DrawTabs();
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
+        g_hovered_box = -1;
         DrawRows(g_page);
         ImGui::EndChild();
         DrawFooter(em);

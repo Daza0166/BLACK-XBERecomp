@@ -322,19 +322,20 @@ std::string Binding(size_t action) {
     return action < kCount ? Join(g_binds[action]) : std::string();
 }
 
-void Bind(size_t action, int vk) {
+void Bind(size_t action, int vk, int slot) {
+    if (action >= kCount || slot < 0 || slot > 1 || (vk && !NameOf(vk))) return;
     // the settings panel acts on the window's key messages, which mouse buttons do not send
-    if (action >= kCount || !NameOf(vk) || (kActions[action].button == kHostKey && Mouse(vk))) return;
+    if (kActions[action].button == kHostKey && Mouse(vk)) return;
     {
         std::lock_guard lock(g_bind_lock);
-        // a new key joins the action's keys (two at most, the older goes); one it has already comes off, unless it is
-        // the last
         std::vector<int>& keys = g_binds[action];
-        if (auto it = std::find(keys.begin(), keys.end(), vk); it != keys.end()) {
-            if (keys.size() > 1) keys.erase(it);
-        } else {
-            keys.push_back(vk);
-            if (keys.size() > 2) keys.erase(keys.begin());
+        int slots[2] = {0, 0};
+        for (size_t i = 0; i < keys.size() && i < 2; i++) slots[i] = keys[i];
+        if (vk && slots[1 - slot] == vk) slots[1 - slot] = 0;
+        slots[slot] = vk;
+        keys.clear();
+        for (int k : slots) {
+            if (k) keys.push_back(k);
         }
         game::Opt().keys[kActions[action].action.id] = Join(keys);
     }
