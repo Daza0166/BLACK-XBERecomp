@@ -126,16 +126,15 @@ O vs(uint id : SV_VertexID) {
     o.uv = t;
     return o;
 }
-static const float kKnee = 0.6;  // linear luminance where highlights start to stretch
 static const float3 kLum = float3(0.2126, 0.7152, 0.0722);
 static const float3x3 k709To2020 = {0.6274, 0.3293, 0.0433, 0.0691, 0.9195, 0.0114, 0.0164, 0.0880, 0.8956};
-float3 srgb_to_linear(float3 c) {
-    return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+// gamma 2.2 as SDR monitors show it; sRGB's linear toe lifts the darks
+float3 to_linear(float3 c) {
+    return pow(c, 2.2);
 }
-// scaled by luminance so hues keep; white reaches most, smoothly so 8 bit steps don't band
+// inverse Reinhard on luminance so hues keep: the brighter, the more it gains, white reaches most
 float3 expand(float3 c, float most) {
-    float t = saturate((dot(c, kLum) - kKnee) / (1 - kKnee));
-    return c * lerp(1, most, t * t);
+    return c / (1 - dot(c, kLum) * (1 - 1 / most));
 }
 float3 pq(float3 nits) {
     float3 y = pow(saturate(nits / 10000), 0.1593017578125);
@@ -144,9 +143,9 @@ float3 pq(float3 nits) {
 // p0: SDR white nits, peak nits
 float4 hdr10(O i) : SV_Target {
     int3 px = int3(i.p.xy, 0);
-    float3 f = min(expand(srgb_to_linear(frame.Load(px).rgb), max(p0.y / p0.x, 1)) * p0.x, p0.y);
+    float3 f = min(expand(to_linear(frame.Load(px).rgb), max(p0.y / p0.x, 1)) * p0.x, p0.y);
     float4 u = ui.Load(px);
-    float3 panel = srgb_to_linear(u.a > 0 ? u.rgb / u.a : 0) * p0.x;
+    float3 panel = to_linear(u.a > 0 ? u.rgb / u.a : 0) * p0.x;
     return float4(pq(mul(k709To2020, lerp(f, panel, u.a))), 1);
 }
 )";
