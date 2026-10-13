@@ -13,6 +13,7 @@ This port was created using the [Xbox XBE Recomp](https://github.com/TGP482/Xbox
 
 ## Features
 ### Display
+- **Monitor** - Picks the monitor the game shows on, for Fullscreen and Borderless (and where Windowed opens). Lists every connected monitor by its Windows number and desktop resolution.
 - **Display Mode** - Switch between Fullscreen, Borderless and Windowed.
 - **Resolution** - Lists every mode your monitor reports and defaults to your desktop resolution, replacing the original 640x480 resolution.
 - **Render Resolution** - Renders the game at 20% to 200% of the output resolution, allowing supersampling or downscaling independent of the window size.

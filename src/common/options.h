@@ -8,6 +8,7 @@
 namespace game {
 
 struct Options {
+    std::string monitor;  // its device name, \\.\DISPLAY2; empty the primary
     bool skip_intros = false;  // logos at boot and the film after pressing start
     bool fps_counter = false;
     bool hdr_output = true;  // HDR10 on a display with Windows HDR on

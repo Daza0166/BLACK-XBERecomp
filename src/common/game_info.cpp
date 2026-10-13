@@ -11,6 +11,7 @@
 #include "app/app.h"
 #include "audio/output.h"
 #include "common/menu.h"
+#include "common/monitor.h"
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
 
@@ -18,10 +19,19 @@ namespace game {
 
 namespace {
 
+constexpr uint32_t kHostApplyDisplay = WM_APP + 1;  // main.cpp's kApplyDisplay
+
 // the panel's keys and the mouse; F3 and the display mode stay with the host
-bool Message(void*, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
+bool Message(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
     using namespace app;
     switch (msg) {
+        case WM_CREATE:
+            UpdateSplashMonitor();
+            UpdateWindowMonitor(hwnd);
+            break;
+        case kHostApplyDisplay:
+            UpdateWindowMonitor(hwnd);
+            break;
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN:
             if (!(lp & (1 << 30)) && input::PanelKey(int(wp))) {
@@ -75,6 +85,7 @@ void Rumble(int port, uint16_t& left, uint16_t& right) {
 void Load(const void* table) {
     const toml::table& t = *static_cast<const toml::table*>(table);
     Options& o = Opt();
+    o.monitor = t["monitor"].value_or(o.monitor);
     o.mouse_sensitivity = float(t["mouse_sensitivity"].value_or(double(o.mouse_sensitivity)));
     if (const toml::table* keys = t["keys"].as_table())
         for (auto&& [id, value] : *keys)
@@ -90,6 +101,7 @@ void Init() {
 void Save(void* table) {
     toml::table& t = *static_cast<toml::table*>(table);
     const Options& o = Opt();
+    t.insert("monitor", o.monitor);
     t.insert("mouse_sensitivity", double(o.mouse_sensitivity));
     toml::table keys;
     for (const auto& [id, value] : o.keys) keys.insert(id, value);
