@@ -151,6 +151,7 @@ const app::GameInfo app::kGame = {
                 {"invert_mouse", &game::Opt().invert_mouse, nullptr}, {"hold_aim", &game::Opt().hold_aim, nullptr},
                 {"walk_speed", nullptr, &game::Opt().walk_speed}, {"fov", nullptr, &game::Opt().fov},
                 {"msaa", nullptr, &game::Opt().msaa},
+                {"smaa", &game::Opt().smaa, nullptr},
                 {"draw_distance", nullptr, &game::Opt().draw_distance},
                 {"ambient_occlusion", nullptr, &game::Opt().ambient_occlusion},
                 {"viewmodel_fov", nullptr, &game::Opt().viewmodel_fov},

@@ -224,7 +224,7 @@ void Changed(bool display) {
 
 enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur,
              kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kMsaa,
-             kAmbientOcclusion, kAudioOutput, kHdrOutput, kMonitor, kLanguage };
+             kAmbientOcclusion, kAudioOutput, kHdrOutput, kMonitor, kLanguage, kSmaa };
 
 using rows::Kind;
 using rows::Row;
@@ -243,6 +243,7 @@ constexpr Row kSettingsRows[] = {
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
     {Kind::Heading, -1, "GRAPHICS"},
     {Kind::Value, kMsaa, "MSAA"},
+    {Kind::Value, kSmaa, "SMAA"},
     {Kind::Value, kAniso, "ANISOTROPIC FILTERING"},
     {Kind::Value, kDrawDistance, "DRAW DISTANCE"},
     {Kind::Value, kAmbientOcclusion, "AMBIENT OCCLUSION"},
@@ -277,6 +278,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kFpsCounter: return &o.fps_counter;
         case kHdrOutput: return &o.hdr_output;
         case kReloadBlur: return &o.reload_blur;
+        case kSmaa: return &o.smaa;
         case kSkipIntros: return &o.skip_intros;
         case kInvertMouse: return &o.invert_mouse;
         case kHoldAim: return &o.hold_aim;

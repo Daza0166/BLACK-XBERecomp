@@ -27,6 +27,7 @@ struct Options {
     uint32_t walk_speed = 50;  // percent of running, while the walk key is held
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
+    bool smaa = false;  // over the finished frame, HUD included; combines with msaa
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
