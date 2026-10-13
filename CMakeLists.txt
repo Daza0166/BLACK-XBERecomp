@@ -18,8 +18,8 @@ else()
     set(SDK ${xbe_sdk_SOURCE_DIR})
 endif()
 include(${SDK}/cmake/XbeRecomp.cmake)
-# src/sound, src/d3d and src/audio replace the SDK ones
-list(FILTER XBE_RUNTIME_SOURCES EXCLUDE REGEX "/(xdk/dsound|xdk/d3d8|gpu/d3d12|audio/xaudio2)\\.cpp$")
+# src/sound, src/d3d, src/audio and src/common/game_files.cpp replace the SDK ones
+list(FILTER XBE_RUNTIME_SOURCES EXCLUDE REGEX "/(xdk/dsound|xdk/d3d8|gpu/d3d12|audio/xaudio2|app/game_files)\\.cpp$")
 
 file(GLOB XBE_HOST_SOURCES CONFIGURE_DEPENDS src/*/*.cpp)
 list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/game/")
@@ -44,7 +44,9 @@ add_custom_target(build_info
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_info.cmake
     BYPRODUCTS ${BUILD_INFO}
     VERBATIM)
+# version.rc also embeds src/common/europe.patch
 set_source_files_properties(src/common/version.rc PROPERTIES
-    INCLUDE_DIRECTORIES ${CMAKE_CURRENT_BINARY_DIR} OBJECT_DEPENDS ${BUILD_INFO})
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR};${CMAKE_CURRENT_SOURCE_DIR}/src/common"
+    OBJECT_DEPENDS "${BUILD_INFO};${CMAKE_CURRENT_SOURCE_DIR}/src/common/europe.patch")
 target_sources(Black PRIVATE src/common/version.rc)
 add_dependencies(Black build_info)

@@ -7,7 +7,7 @@ This port was created using the [Xbox XBE Recomp](https://github.com/TGP482/Xbox
 > This project does not include any game assets. You must provide the files from your own legally acquired copy of the game to install or build.
 
 ## Installation
-- Put your game files in the `assets` folder. This can be an ISO, or the extracted data files.
+- Put your game files in the `assets` folder. This can be an ISO, or the extracted data files, of the USA or Europe release.
 - Run `Black.exe`.
 - Recomp settings can be adjusted in the in-game options menu while the game is running, or through the Settings overlay, which is opened with F10 by default.
 
@@ -66,7 +66,7 @@ git clone https://github.com/TGP482/BLACK-XBERecomp.git
 ```
 
 ### 2. Add the Required Game Files
-Place your extracted game data files in the `assets` folder. `default.xbe` must be there, with the rest of the game's files beside it.
+Place your extracted game data files in the `assets` folder. `default.xbe` from the USA release must be there, with the rest of the game's files beside it.
 
 
 ### 3. Install Dependencies
