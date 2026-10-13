@@ -32,11 +32,15 @@ std::atomic<int> g_dx{0}, g_dy{0};
 std::atomic<uint64_t> g_take_ms{0};     // TakeMouse, asked every tick in play
 std::atomic<uint64_t> g_capture_ms{0};  // PressedKey
 std::atomic<bool> g_settle{false};
-std::atomic<uint16_t> g_tap{0};
-std::atomic<uint64_t> g_tap_until{0}, g_confirm_until{0};
+std::atomic<uint64_t> g_confirm_until{0};
 std::atomic<bool> g_menu{false}, g_keyboard{true};
 std::atomic<int> g_wheel{0};
 constexpr uint64_t kPlayMs = 250, kTapMs = 80;
+constexpr uint64_t kCaptureMs = 250;  // PressedKey asked this recently: a key capture is up
+// The wheel binds as two keys, codes Windows leaves unassigned. A notch holds what is bound to it for one tap.
+constexpr int kWheelUp = 0x0E;
+constexpr int kWheelDown = 0x0F;
+std::atomic<uint64_t> g_wheel_ms[2] = {};  // the last notch up, down
 
 uint64_t NowMs() {
     auto since = std::chrono::steady_clock::now().time_since_epoch();
@@ -64,8 +68,8 @@ constexpr Target kActions[] = {
     {{"reload", "RELOAD", "R"}, 0},
     {{"interact", "INTERACT", "F"}, 2},
     {{"grenade", "THROW GRENADE", "G"}, 6},
-    {{"weapon_up", "CHANGE WEAPON UP", "E"}, 11},
-    {{"weapon_down", "CHANGE WEAPON DOWN", "Q"}, 10},
+    {{"weapon_up", "CHANGE WEAPON UP", "E,Wheel Up"}, 11},
+    {{"weapon_down", "CHANGE WEAPON DOWN", "Q,Wheel Down"}, 10},
     {{"suppressor", "TOGGLE SUPPRESSOR", "T"}, 3},
     {{"firing_mode", "FIRING MODE / SCOPE ZOOM", "X"}, 8},
     {{"health_pack", "HEALTH PACK", "H"}, 9},
@@ -84,15 +88,13 @@ constexpr size_t kPanelAction = [] {
     while (kActions[i].button != kHostKey) i++;
     return i;
 }();
-// the wheel changes weapon
-constexpr uint16_t kWheelUp = 1 << 3, kWheelDown = 1 << 2;
-
 struct Name {
     int vk;
     const char* name;
 };
 constexpr Name kNames[] = {
     {VK_LBUTTON, "LMB"}, {VK_RBUTTON, "RMB"}, {VK_MBUTTON, "MMB"}, {VK_XBUTTON1, "Mouse4"}, {VK_XBUTTON2, "Mouse5"},
+    {kWheelUp, "Wheel Up"}, {kWheelDown, "Wheel Down"},
     {VK_SPACE, "Space"}, {VK_RETURN, "Enter"}, {VK_ESCAPE, "Escape"}, {VK_BACK, "Backspace"}, {VK_TAB, "Tab"},
     {VK_SHIFT, "Shift"}, {VK_CONTROL, "Ctrl"}, {VK_MENU, "Alt"}, {VK_CAPITAL, "CapsLock"},
     {VK_UP, "Up"}, {VK_DOWN, "Down"}, {VK_LEFT, "Left"}, {VK_RIGHT, "Right"},
@@ -152,12 +154,21 @@ std::string Join(const std::vector<int>& vks) {
     return s;
 }
 
-bool Active() { return g_hwnd && GetForegroundWindow() == g_hwnd && !app::MenuOpen(); }
-bool Down(int vk) { return GetAsyncKeyState(vk) < 0; }
-bool Mouse(int vk) { return vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2; }
+bool Foreground() { return g_hwnd && GetForegroundWindow() == g_hwnd; }
+bool Active() { return Foreground() && !app::MenuOpen(); }
+bool Wheel(int vk) { return vk == kWheelUp || vk == kWheelDown; }
+bool Down(int vk) {
+    if (Wheel(vk)) return NowMs() - g_wheel_ms[vk == kWheelDown] < kTapMs;
+    return GetAsyncKeyState(vk) < 0;
+}
+bool Mouse(int vk) {
+    bool button = vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2;
+    return button || Wheel(vk);
+}
 bool Play() { return NowMs() - g_take_ms < kPlayMs; }
 // Delete clears a binding on the options pages: bound to a move key it would move the selection off the row first
 bool GameDown(int vk) { return Down(vk) && !(g_menu && vk == VK_DELETE); }
+bool KeyCaptureUp() { return NowMs() - g_capture_ms <= kCaptureMs; }
 
 void Clip() {
     RECT r, cur;
@@ -187,24 +198,25 @@ void OnRawInput(void* handle) {
     RAWINPUT ri;
     UINT size = sizeof(ri);
     if (GetRawInputData(static_cast<HRAWINPUT>(handle), RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER)) == UINT(-1) ||
-        ri.header.dwType != RIM_TYPEMOUSE || !Active())
+        ri.header.dwType != RIM_TYPEMOUSE)
         return;
     const RAWMOUSE& m = ri.data.mouse;
+    int notch = 0;
+    if (m.usButtonFlags & RI_MOUSE_WHEEL) notch = SHORT(m.usButtonData) > 0 ? 1 : -1;
+    // noted while the settings panel has the input too, so its key capture sees the wheel
+    if (notch && Foreground()) g_wheel_ms[notch < 0] = NowMs();
+    if (!Active()) return;
     SetKeyboard(true);
-    // the cursor is free in the game's menus
+    // the cursor is free in the game's menus, where the wheel scrolls unless a key capture takes it
     if (!Play()) {
         ClipCursor(nullptr);
-        if (m.usButtonFlags & RI_MOUSE_WHEEL) g_wheel += SHORT(m.usButtonData) > 0 ? 1 : -1;
+        if (!KeyCaptureUp()) g_wheel += notch;
         return;
     }
     Clip();
     if (!(m.usFlags & MOUSE_MOVE_ABSOLUTE)) {
         g_dx += m.lLastX;
         g_dy += m.lLastY;
-    }
-    if (m.usButtonFlags & RI_MOUSE_WHEEL) {
-        g_tap = SHORT(m.usButtonData) > 0 ? kWheelUp : kWheelDown;
-        g_tap_until = NowMs() + kTapMs;
     }
 }
 
@@ -244,11 +256,13 @@ void Keyboard(Pad& p) {
     }
     bool play = Play(), walk = false, used = std::any_of(std::begin(kFixed), std::end(kFixed), Down);
     int stick[8] = {};  // move forward back left right, look up down left right
+    // in a menu the wheel scrolls, it presses its binds in play only
+    auto pressed = [play](int vk) { return GameDown(vk) && (play || !Wheel(vk)); };
     static bool pause_held, pause_backs;
     bool pause = false;
     for (size_t i = 0; i < kCount; i++) {
         int b = kActions[i].button;
-        if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), GameDown)) continue;
+        if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), pressed)) continue;
         used = true;
         if (b == kWalk) walk = true;
         else if (b >= 20 && !play) continue;
@@ -274,7 +288,6 @@ void Keyboard(Pad& p) {
     if (int y = stick[0] - stick[1]) p.ly = int16_t(float(y) * speed * 32767.0f);
     if (int x = stick[7] - stick[6]) p.rx = int16_t(x * 32767);
     if (int y = stick[4] - stick[5]) p.ry = int16_t(y * 32767);
-    if (NowMs() < g_tap_until) p.buttons |= g_tap;
     if (used) SetKeyboard(true);
 }
 
@@ -402,7 +415,7 @@ int PressedKey() {
 }
 
 bool PanelKey(int vk) {
-    if (NowMs() - g_capture_ms <= 250) return false;
+    if (KeyCaptureUp()) return false;
     std::lock_guard lock(g_bind_lock);
     const auto& b = g_binds[kPanelAction];
     return std::find(b.begin(), b.end(), vk) != b.end();
