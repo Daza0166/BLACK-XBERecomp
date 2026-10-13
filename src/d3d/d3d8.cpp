@@ -10,6 +10,7 @@
 #include "app/app.h"
 #include "common/menu.h"
 #include "core/diag.h"
+#include "d3d/gpu_frame.h"
 #include "d3d/occlusion.h"
 #include "gpu/backend.h"
 #include "gpu/texture.h"
@@ -473,6 +474,7 @@ HLE_STDCALL(D3DDevice_GetDepthStencilSurface2, 0) {
 
 namespace {
 std::atomic<uint32_t> g_presents{0};
+uint64_t g_backend_presents = 0;
 }  // namespace
 
 HLE_STDCALL(D3DDevice_Swap, 1) {
@@ -498,7 +500,13 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
             g_backend->SetGamma(static_cast<const uint8_t*>(HostPtr(kDevice + XDK_CDevice_GammaRamps + i * 0x300)));
         }
     }
-    if (g_backend) g_backend->Present(SurfaceOf(g_buffers[1]));
+    if (g_backend) {
+        g_backend->Present(SurfaceOf(g_buffers[1]));
+        // the title records one frame while the GPU draws the one before it: a GPU bound frame rate then paces the
+        // game like a frame rate cap, and the frame times the game measures match the frames shown
+        if (g_backend_presents) gpu::WaitGpuFrame(g_backend_presents - 1);
+        g_backend_presents++;
+    }
     g_fog = {};
     app::PaceFrame();
     // like the XDK, the surfaces stay put and their memory rotates: titles keep back buffer pointers and copy its data
