@@ -15,6 +15,7 @@ void Keyboard(Pad& pad);         // held keys onto port 0's pad
 bool TakeMouse(float& dx, float& dy);
 
 // actions the keyboard and mouse can be bound to, key names comma separated
+// letter, digit and symbol keys bind by position as the US key there; Binding and ButtonKey show the player's labels
 struct Action {
     const char* id;
     const char* label;
