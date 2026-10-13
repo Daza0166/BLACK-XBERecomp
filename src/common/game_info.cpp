@@ -9,6 +9,7 @@
 #include <toml++/toml.hpp>
 
 #include "app/app.h"
+#include "audio/output.h"
 #include "common/menu.h"
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
@@ -80,6 +81,12 @@ void Load(const void* table) {
             if (auto v = value.value<std::string>()) o.keys[std::string(id.str())] = *v;
 }
 
+// after the settings load, before boot
+void Init() {
+    input::LoadBindings();
+    audio::SetOutputMode(Opt().audio_output);
+}
+
 void Save(void* table) {
     toml::table& t = *static_cast<toml::table*>(table);
     const Options& o = Opt();
@@ -115,10 +122,11 @@ const app::GameInfo app::kGame = {
                 {"msaa", nullptr, &game::Opt().msaa},
                 {"draw_distance", nullptr, &game::Opt().draw_distance},
                 {"ambient_occlusion", nullptr, &game::Opt().ambient_occlusion},
-                {"viewmodel_fov", nullptr, &game::Opt().viewmodel_fov}},
+                {"viewmodel_fov", nullptr, &game::Opt().viewmodel_fov},
+                {"audio_output", nullptr, &game::Opt().audio_output}},
     .load = game::Load,
     .save = game::Save,
-    .init = input::LoadBindings,
+    .init = game::Init,
     .loaded = nullptr,
     .window = input::StartMouse,
     .message = game::Message,

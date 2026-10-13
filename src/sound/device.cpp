@@ -76,12 +76,23 @@ HLE_STDCALL(DirectSoundCreate, 3) {
 HLE_STDCALL(IDirectSound_Release, 1) { return 0; }
 HLE_STDCALL(DirectSoundUseFullHRTF, 0) { return 0; }
 HLE_STDCALL(DirectSoundUseLightHRTF, 0) { return 0; }
+// DSSPEAKER as the library keeps it (0x4CDB34 in Double Agent): the dashboard's XC_AUDIO_FLAGS
 HLE_STDCALL(IDirectSound_GetSpeakerConfig, 2) {
-    W32(a[1], 0);  // DSSPEAKER_STEREO
+    constexpr uint32_t kStereo = 0;
+    constexpr uint32_t kMono = 1;  // DSSPEAKER_MONO
+    constexpr uint32_t kSurroundAc3 = 0x2 | 0x10000;  // DSSPEAKER_SURROUND | DSSPEAKER_ENABLE_AC3
+    uint32_t config = kStereo;
+    if (audio::IsMono()) config = kMono;
+    if (audio::IsSurround()) config = kSurroundAc3;
+    W32(a[1], config);
     return 0;
 }
 HLE_STDCALL(IDirectSound_SetEffectData, 6) { return 0; }
-HLE_STDCALL(IDirectSound_EnableHeadphones, 2) { return 0; }
+HLE_STDCALL(IDirectSound_EnableHeadphones, 2) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_headphones = a[1] != 0;
+    return 0;
+}
 // (this, mix bin, headroom)
 HLE_STDCALL(IDirectSound_SetMixBinHeadroom, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);

@@ -10,6 +10,7 @@
 #include <mutex>
 #include <vector>
 
+#include "audio/output.h"
 #include "sound/reverb.h"
 #include "xdk/hle.h"
 
@@ -27,7 +28,7 @@ constexpr uint32_t kRows = 3;
 constexpr uint32_t kLeftEar = 0;
 constexpr uint32_t kRightEar = 1;
 constexpr uint32_t kDry = 2;
-constexpr uint32_t kOuts = 2;  // host left and right
+constexpr uint32_t kOuts = audio::kChannels;  // the speakers, in audio::Speaker order
 
 // levels of a voice's rows on the host outputs
 struct Gains {
@@ -78,6 +79,8 @@ struct Place {
     bool on = false;
     float att = 1;
     float azimuth = 0;
+    float front = 1;  // crosstalk front pair
+    float back = 0;   // crosstalk back pair, silent on a stereo console
 };
 
 struct Done {
@@ -94,6 +97,7 @@ inline std::condition_variable_any g_done_cv;
 inline std::atomic<int64_t> g_pumped{0};          // the last DirectSoundDoWork, steady ms
 inline bool g_started = false;
 inline uint32_t g_ds = 0;
+inline bool g_headphones = false;  // IDirectSound_EnableHeadphones
 // BkXboxFx.bin's reverb (effect 16) reads its input from mix bin 11 alone
 constexpr uint32_t kSends = 1u << 11;
 // IDirectSound_SetMixBinHeadroom, a step halves the bin

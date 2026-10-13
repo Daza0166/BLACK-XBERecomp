@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "audio/output.h"
+
 namespace sound {
 
 // The XDK's I3DL2 reverb as its DSP program runs it: a 24 kHz core, delays in samples at that rate
@@ -32,7 +34,7 @@ struct Reverb {
     Line line[14];
     Params now, next;
     bool on = false, pending = false;
-    float fade = 1, held[2] = {};
+    float fade = 1, held[4] = {};
     uint32_t tick = 0;
 
     Reverb() {
@@ -129,8 +131,9 @@ struct Reverb {
         l[12].Put(q.echo_lp[0].Run(ea));
         l[13].Put(q.echo_lp[1].Run(eb));
     }
-    // adds the reverb of the 48 kHz send to the stereo frames, the rear pair folds into the front
+    // adds the reverb of the 48 kHz send to the front and back pairs
     void Run(const float* send, float* out, uint32_t frames) {
+        static const audio::Speaker kOut[4] = {audio::FrontLeft, audio::FrontRight, audio::BackLeft, audio::BackRight};
         for (uint32_t i = 0; on && i < frames; i++) {
             float x = now.in_lp.Run(send[i] * 0.5f), o[4];
             if (!(tick++ & 1)) {
@@ -142,11 +145,9 @@ struct Reverb {
                     fade = std::min(fade + 1 / 128.0f, 1.0f);
                 }
                 Frame(x, o);
-                held[0] = (o[0] + o[2]) * fade;
-                held[1] = (o[1] + o[3]) * fade;
+                for (int k = 0; k < 4; k++) held[k] = o[k] * fade;
             }
-            out[i * 2] += held[0];
-            out[i * 2 + 1] += held[1];
+            for (int k = 0; k < 4; k++) out[i * audio::kChannels + kOut[k]] += held[k];
         }
     }
 };

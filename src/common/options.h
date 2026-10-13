@@ -20,6 +20,7 @@ struct Options {
     uint32_t fov = 70;  // horizontal degrees on a 4:3 frame, 70 is the game's
     uint32_t viewmodel_fov = 70;  // the gun and arms, the same measure
     uint32_t walk_speed = 50;  // percent of running, while the walk key is held
+    uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();

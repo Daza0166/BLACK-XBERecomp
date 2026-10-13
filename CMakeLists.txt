@@ -18,8 +18,8 @@ else()
     set(SDK ${xbe_sdk_SOURCE_DIR})
 endif()
 include(${SDK}/cmake/XbeRecomp.cmake)
-# src/sound and src/d3d replace the SDK ones
-list(FILTER XBE_RUNTIME_SOURCES EXCLUDE REGEX "/(xdk/dsound|xdk/d3d8|gpu/d3d12)\\.cpp$")
+# src/sound, src/d3d and src/audio replace the SDK ones
+list(FILTER XBE_RUNTIME_SOURCES EXCLUDE REGEX "/(xdk/dsound|xdk/d3d8|gpu/d3d12|audio/xaudio2)\\.cpp$")
 
 file(GLOB XBE_HOST_SOURCES CONFIGURE_DEPENDS src/*/*.cpp)
 list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/game/")

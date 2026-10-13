@@ -22,6 +22,7 @@
 #include <imgui.h>
 
 #include "app/app.h"
+#include "audio/output.h"
 #include "common/menu.h"
 #include "common/mouse_keyboard.h"
 #include "common/options.h"
@@ -61,6 +62,9 @@ constexpr uint32_t kMsaaValues[] = {0, 2, 4, 8};
 const char* const kMsaaNames[] = {"OFF", "2x", "4x", "8x"};
 constexpr uint32_t kAoValues[] = {0, 1, 2};
 const char* const kAoNames[] = {"OFF", "SSAO", "GTAO"};
+constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, audio::kOutputStereo,
+                                      audio::kOutputSurround};
+const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, kFpsCapRefresh, 0};
 
 int StepIndex(int index, int step, int count) {
@@ -207,12 +211,13 @@ void Flip(bool& on, int step) {
 // applies and saves
 void Changed(bool display) {
     if (display) ApplyDisplay();
+    audio::SetOutputMode(game::Opt().audio_output);
     Save();
 }
 
 enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur,
              kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kMsaa,
-             kAmbientOcclusion };
+             kAmbientOcclusion, kAudioOutput };
 
 using rows::Kind;
 using rows::Row;
@@ -235,6 +240,7 @@ constexpr Row kSettingsRows[] = {
     {Kind::Value, kReloadBlur, "RELOAD BLUR"},
     {Kind::Heading, -1, "GENERAL"},
     {Kind::Value, kSkipIntros, "SKIP INTROS"},
+    {Kind::Value, kAudioOutput, "AUDIO OUTPUT"},
 };
 
 const std::vector<Row>& InputRows() {
@@ -358,10 +364,13 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
     }
 }
 
-// the mouse and keyboard rows that are no ON / OFF, stepped first
+// the general, mouse and keyboard rows that are no ON / OFF, stepped first
 void StepInputRow(int id, int step, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
+        case kAudioOutput:
+            std::snprintf(text, sizeof(text), "%s", kAudioOutputNames[StepTable(kAudioOutputs, o.audio_output, step)]);
+            break;
         case kSensitivity:
             // 0.1 to 5.0 in steps of 0.1
             if (step) {

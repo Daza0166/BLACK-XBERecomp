@@ -1,7 +1,6 @@
 // decoding, levels and the mix
 #include <chrono>
 
-#include "audio/audio.h"
 #include "sound/sound.h"
 
 namespace sound {
@@ -78,8 +77,10 @@ float Azimuth(const float d[3], const float front[3], const float right[3]) {
 }
 
 // Interaural delay in samples, above 0 the left ear hears later. Black's light HRTF table (0x2233B0) holds it
-// in the last byte of the far ear's filter, one entry every 3 degrees.
-float Itd(float azimuth) {
+// in the last byte of the far ear's filter, one entry every 3 degrees. With speakers behind the listener a sound
+// behind takes the entry of its mirror in front (0x4D4D6C in Double Agent).
+float Itd(float azimuth, bool surround) {
+    if (surround && std::fabs(azimuth) > 90) azimuth = std::copysign(180 - std::fabs(azimuth), azimuth);
     static const uint8_t kDelay[61] = {0,  2,  3,  4,  4,  5,  6,  9,  10, 11, 12, 12, 13, 14, 17, 18,
                                        19, 20, 21, 21, 22, 23, 24, 25, 26, 28, 29, 29, 31, 30, 30, 31,
                                        30, 28, 27, 28, 27, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15,
@@ -102,6 +103,15 @@ float Attenuation(const Voice& v, float dist) {
     return from + (v.curve[i] - from) * (pos - i);
 }
 
+// Share of a 3D voice for the crosstalk pair behind, by power (0x4D1986 in Double Agent): none to 45 degrees,
+// half at 90, all from 135, drawn towards half and half within half a unit of the head. Black turns sounds on the
+// horizontal plane only, so no elevation.
+float BackShare(float azimuth, float dist) {
+    float back = std::clamp(std::fabs(azimuth) / 90 - 0.5f, 0.0f, 1.0f);
+    if (dist < 0.5f) back = ((back - 0.5f) * dist + 1) * 0.5f;
+    return back;
+}
+
 // Where a 3D voice sits for the library's 3D pass (DSOUND 0x219074): distance attenuation and azimuth
 Place Locate(const Voice& v) {
     Place at;
@@ -110,13 +120,20 @@ Place Locate(const Voice& v) {
     bool rel = v.mode == 1;  // the position is already in listener space
     float d[3] = {v.p[0], v.p[1], v.p[2]};
     for (int i = 0; i < 3 && !rel; i++) d[i] -= g_listener[i];
-    at.att = Attenuation(v, std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+    float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    at.att = Attenuation(v, dist);
     static const float kHeadFront[3] = {0, 0, 1};
     static const float kHeadRight[3] = {1, 0, 0};
     float right[3] = {g_top[1] * g_front[2] - g_top[2] * g_front[1], g_top[2] * g_front[0] - g_top[0] * g_front[2],
                       g_top[0] * g_front[1] - g_top[1] * g_front[0]};
     float level[3] = {d[0], 0, d[2]};  // the library turns the sound on the horizontal plane only
     at.azimuth = Azimuth(level, rel ? kHeadFront : g_front, rel ? kHeadRight : right);
+    // surround without headphones splits the crosstalk pairs (0x4CF3F7 in Double Agent)
+    if (audio::IsSurround() && !g_headphones) {
+        float back = BackShare(at.azimuth, dist);
+        at.front = std::sqrt(1 - back);
+        at.back = std::sqrt(back);
+    }
     return at;
 }
 
@@ -126,11 +143,12 @@ constexpr uint32_t kCrosstalkFrontRight = 7;
 constexpr uint32_t kCrosstalkBackLeft = 8;
 constexpr uint32_t kCrosstalkBackRight = 9;
 
-// The library's level of a 3D voice in a bin (0x21E94D): the crosstalk pair in front carries it, the pair behind
-// is silent on a stereo console, every bin takes the distance attenuation. Left and right come from the HRTF.
+// The library's level of a 3D voice in a bin (0x21E94D): the crosstalk pairs take their shares, every bin takes the
+// distance attenuation. Left and right come from the HRTF.
 float BinScale(const Place& at, uint32_t bin) {
     if (!at.on) return 1.0f;
-    if (bin == kCrosstalkBackLeft || bin == kCrosstalkBackRight) return 0.0f;
+    if (bin == kCrosstalkFrontLeft || bin == kCrosstalkFrontRight) return at.att * at.front;
+    if (bin == kCrosstalkBackLeft || bin == kCrosstalkBackRight) return at.att * at.back;
     return at.att;
 }
 
@@ -143,11 +161,13 @@ uint32_t RowOf(const Place& at, const Voice& v, uint32_t c, uint32_t bin) {
     return kDry;
 }
 
-// a speaker bin on host left and right: even bins left, odd right, 2 the centre on both
+// the speaker a bin plays on: bins 0 to 5 are the speakers, the crosstalk bins join the front and back pairs
+static_assert(audio::Centre == 2 && audio::Sub == 3 && audio::BackRight == 5);
 void PlaceBin(uint32_t bin, float x, float g[kOuts]) {
-    if (bin == 2) x *= 0.707f;
-    if (bin == 2 || !(bin & 1)) g[0] = std::max(g[0], x);
-    if (bin == 2 || (bin & 1)) g[1] = std::max(g[1], x);
+    static const audio::Speaker kCrosstalk[4] = {audio::FrontLeft, audio::FrontRight, audio::BackLeft,
+                                                 audio::BackRight};
+    uint32_t to = bin < kCrosstalkFrontLeft ? bin : kCrosstalk[bin - kCrosstalkFrontLeft];
+    g[to] = std::max(g[to], x);
 }
 
 // Gain of each row on host left and right and into the reverb.
@@ -173,15 +193,15 @@ Gains Levels(const Voice& v, const Place& at) {
                 g.send[r] += std::ldexp(x, -g_bin_headroom[b]);
                 continue;
             }
-            if (speakers && (b == 3 || b > 9)) continue;  // sub and other effect sends
+            if (speakers && b > 9) continue;  // other effect sends
             float* row = g.out[r];
             if (speakers) {
                 PlaceBin(b, x, row);
                 continue;
             }
-            // a voice with no speaker bin plays on both sides
-            row[0] = std::max(row[0], x);
-            row[1] = std::max(row[1], x);
+            // a voice with no speaker bin plays on the front pair
+            row[audio::FrontLeft] = std::max(row[audio::FrontLeft], x);
+            row[audio::FrontRight] = std::max(row[audio::FrontRight], x);
         }
     }
     // a sound placed at NaN goes silent alone; its NaN gain would silence the whole mix
@@ -286,7 +306,7 @@ void MixVoice(Voice& v, float* out, float* send, uint32_t frames) {
     Place at = Locate(v);
     Gains g = Levels(v, at);
     bool ears = at.on && v.channels == 1;
-    float itd = Itd(at.azimuth);
+    float itd = Itd(at.azimuth, audio::IsSurround());
     if (!v.has_gain) v.itd = itd;
     float itd_step = (itd - v.itd) / float(frames);
     Gains dg = UpdateRamp(v, g, frames);
@@ -313,6 +333,7 @@ void MixVoice(Voice& v, float* out, float* send, uint32_t frames) {
     v.itd = itd;
 }
 
+// the device clips once, after the fold to stereo sums the speakers
 void Render(float* out, uint32_t frames) {
     std::memset(out, 0, frames * kOuts * sizeof(float));
     static std::vector<float> send;  // the output thread alone renders
@@ -323,7 +344,6 @@ void Render(float* out, uint32_t frames) {
         MixVoice(v, out, send.data(), frames);
     }
     g_reverb.Run(send.data(), out, frames);
-    for (uint32_t i = 0; i < frames * kOuts; i++) out[i] = std::clamp(out[i], -1.0f, 1.0f);
 }
 
 int64_t NowMs() {
