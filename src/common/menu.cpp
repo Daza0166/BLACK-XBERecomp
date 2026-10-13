@@ -103,6 +103,7 @@ int StepRange(int value, int lo, int hi, int inc, int step) {
     return lo + inc * StepIndex((std::clamp(value, lo, hi) - lo) / inc, step, count);
 }
 
+// smallest first, so Left steps down
 std::vector<Mode> Modes() {
     std::vector<Mode> modes;
     DEVMODEW dm{};
@@ -114,7 +115,7 @@ std::vector<Mode> Modes() {
         if (std::none_of(modes.begin(), modes.end(), same)) modes.push_back(m);
     }
     std::sort(modes.begin(), modes.end(), [](const Mode& a, const Mode& b) {
-        return a.width != b.width ? a.width > b.width : a.height > b.height;
+        return a.width != b.width ? a.width < b.width : a.height < b.height;
     });
     return modes;
 }
