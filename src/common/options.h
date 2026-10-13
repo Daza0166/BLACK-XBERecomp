@@ -28,6 +28,7 @@ struct Options {
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
     bool smaa = false;  // over the finished frame, HUD included; combines with msaa
+    bool pause_on_focus_loss = true;  // the game and its sound stop while the window is in the background
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
@@ -37,5 +38,8 @@ bool HasLanguages();  // language.cpp
 inline std::atomic<float> g_fps{0};  // from the host, for the game's own counter
 inline std::atomic<bool> g_hdr_display{false};  // the window's display has Windows HDR on, from the renderer
 inline std::atomic<bool> g_hide_hud{false};  // the toggle HUD key: the gameplay HUD is not drawn
+inline std::atomic<bool> g_focus_paused{false};  // the game thread waits for the window's focus
+inline std::atomic<uint32_t> g_focus_pauses{0};  // focus pauses ended so far
+void WaitWhileUnfocused();  // focus_pause.cpp: game thread, before the present
 
 }  // namespace game

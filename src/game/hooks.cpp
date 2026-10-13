@@ -30,6 +30,11 @@ void VerticalBlank(X86Context& ctx) {
     uint32_t info = mem::AllocSystem(12);
     auto next = std::chrono::steady_clock::now();
     for (;;) {
+        // the film decoder paces on the count: it stands still through a focus pause
+        while (game::g_focus_paused) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            next = std::chrono::steady_clock::now();
+        }
         next += std::chrono::microseconds(16667);
         std::this_thread::sleep_until(next);
         uint32_t count = R32(kDevice + XDK_CDevice_VBlankCount) + 1;

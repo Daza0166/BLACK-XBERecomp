@@ -152,6 +152,7 @@ const app::GameInfo app::kGame = {
                 {"walk_speed", nullptr, &game::Opt().walk_speed}, {"fov", nullptr, &game::Opt().fov},
                 {"msaa", nullptr, &game::Opt().msaa},
                 {"smaa", &game::Opt().smaa, nullptr},
+                {"pause_on_focus_loss", &game::Opt().pause_on_focus_loss, nullptr},
                 {"draw_distance", nullptr, &game::Opt().draw_distance},
                 {"ambient_occlusion", nullptr, &game::Opt().ambient_occlusion},
                 {"viewmodel_fov", nullptr, &game::Opt().viewmodel_fov},

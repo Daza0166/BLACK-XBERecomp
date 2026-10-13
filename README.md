@@ -37,6 +37,7 @@ Full keyboard and mouse support with raw input, adjustable sensitivity, inverted
 
 ### General
 - **Skip Intro** - Skips the intro logos.
+- **Pause On Focus Loss** - Pauses the game and its sound while the window is in the background or minimized.
 
 ### Miscellaneous
 - **Custom Menu Cursor** - Place a `cursor.png` (or `cursor.dds`) beside the exe to replace the Windows arrow in the game's menus.

@@ -224,7 +224,8 @@ void Changed(bool display) {
 
 enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur,
              kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kMsaa,
-             kAmbientOcclusion, kAudioOutput, kHdrOutput, kMonitor, kLanguage, kSmaa };
+             kAmbientOcclusion, kAudioOutput, kHdrOutput, kMonitor, kLanguage, kSmaa,
+             kPauseOnFocusLoss };
 
 using rows::Kind;
 using rows::Row;
@@ -250,6 +251,7 @@ constexpr Row kSettingsRows[] = {
     {Kind::Value, kReloadBlur, "RELOAD BLUR"},
     {Kind::Heading, -1, "GENERAL"},
     {Kind::Value, kSkipIntros, "SKIP INTROS"},
+    {Kind::Value, kPauseOnFocusLoss, "PAUSE ON FOCUS LOSS"},
     {Kind::Value, kLanguage, "LANGUAGE"},
     {Kind::Value, kAudioOutput, "AUDIO OUTPUT"},
 };
@@ -280,6 +282,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kReloadBlur: return &o.reload_blur;
         case kSmaa: return &o.smaa;
         case kSkipIntros: return &o.skip_intros;
+        case kPauseOnFocusLoss: return &o.pause_on_focus_loss;
         case kInvertMouse: return &o.invert_mouse;
         case kHoldAim: return &o.hold_aim;
         default: return nullptr;
