@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "common/mouse_keyboard.h"
+#include "common/translations.h"
 #include "game/flash.h"
 #include "xdk/hle.h"
 
@@ -17,6 +18,7 @@ using namespace kernel;
 
 namespace game {
 uint32_t OptionsText(uint32_t id);  // options_menu.cpp
+bool Translated();  // language.cpp
 }
 
 namespace {
@@ -110,7 +112,8 @@ X86_FUNC(sub_001F3A80) {
         // follows the bindings: worded at every ask
         std::string key = input::ButtonKey(int(button - kButtons));
         if (key.empty() || (!it->second && !(it->second = mem::AllocSystem(kHintSize)))) return;
-        std::snprintf(static_cast<char*>(HostPtr(it->second)), kHintSize, "PRESS %s :", key.c_str());
+        std::string press = game::Translated() ? app::Ui("PRESS") : "PRESS";
+        std::snprintf(static_cast<char*>(HostPtr(it->second)), kHintSize, "%s %s :", press.c_str(), key.c_str());
     } else if (fresh) {
         std::string text = Wording(id, ReadCString(ctx.eax, 1024), keyboard);
         if (!text.empty() && (it->second = mem::AllocSystem(uint32_t(text.size() + 1))))

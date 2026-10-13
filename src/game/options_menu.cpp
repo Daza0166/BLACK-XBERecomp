@@ -12,6 +12,7 @@
 
 #include "common/menu.h"
 #include "common/mouse_keyboard.h"
+#include "common/translations.h"
 #include "core/log.h"
 #include "game/flash.h"
 #include "xdk/hle.h"
@@ -258,7 +259,7 @@ bool Entries(X86Context& ctx, uint32_t root, uint32_t holder) {
         char name[16];
         std::snprintf(name, sizeof(name), "RC_E%d", i);
         if (!(p.entry[i] = Copy(ctx, holder, name, kDepth + i))) return false;
-        if (!Show(ctx, kEntry + i, p.entry[i], nullptr, kCaptions[i])) return false;
+        if (!Show(ctx, kEntry + i, p.entry[i], nullptr, app::Ui(kCaptions[i]).c_str())) return false;
     }
     p.first = p.entry[0];
     Follow(p);
@@ -328,13 +329,17 @@ bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
 // what row i of the page shows as its value
 std::string ValueText(const Page& p, size_t i) {
     const Row* row = p.rows[i];
-    if ((p.capture == 1 || p.capture == 2) && p.bind == i) return "PRESS A KEY";
-    if (row == &kPageRow) return kCaptions[p.mode - 1];
-    return row ? app::rows::Value(*row) : " ";
+    if ((p.capture == 1 || p.capture == 2) && p.bind == i) return app::Ui("PRESS A KEY");
+    if (row == &kPageRow) return app::Ui(kCaptions[p.mode - 1]);
+    if (!row) return " ";
+    std::string value = app::rows::Value(*row);
+    // key names as they are
+    if (row->kind == app::rows::Kind::Bind && value != "UNBOUND") return value;
+    return app::Ui(value);
 }
 
 // font +0x1C its last glyph, +0x20 its glyphs by code & 0x7F, each 0x28 bytes on with +0x1C the code
-uint32_t Glyph(uint32_t font, uint8_t code) {
+uint32_t Glyph(uint32_t font, uint16_t code) {
     uint32_t glyph = R32(font + 0x20 + (code & 0x7F) * 4);
     uint32_t last = R32(font + 0x1C);
     if (!glyph) return last;
@@ -342,15 +347,34 @@ uint32_t Glyph(uint32_t font, uint8_t code) {
     return glyph;
 }
 
+// UTF-8 text's characters, as the font codes its glyphs
+std::vector<uint16_t> Codes(const std::string& text) {
+    std::vector<uint16_t> codes;
+    for (size_t i = 0; i < text.size(); i++) {
+        uint8_t c = uint8_t(text[i]);
+        if (c >= 0xE0 && i + 2 < text.size()) {
+            codes.push_back(uint16_t((c & 0x0F) << 12 | (text[i + 1] & 0x3F) << 6 | (text[i + 2] & 0x3F)));
+            i += 2;
+        } else if (c >= 0xC0 && i + 1 < text.size()) {
+            codes.push_back(uint16_t((c & 0x1F) << 6 | (text[i + 1] & 0x3F)));
+            i++;
+        } else {
+            codes.push_back(c);
+        }
+    }
+    return codes;
+}
+
 // a text's width at a height of 1, as 0xC3AF0: font +0x08 its size, +0x10 a spacing; glyph +0x08 width, +0x10
 // left, +0x18 advance, +0x20 spaced
 float Measure(uint32_t font, const std::string& text) {
-    if (!font || text.empty()) return 0.0f;
-    uint32_t glyph = Glyph(font, uint8_t(text[0]));
+    std::vector<uint16_t> codes = Codes(text);
+    if (!font || codes.empty()) return 0.0f;
+    uint32_t glyph = Glyph(font, codes[0]);
     float x = -G<float>(glyph + 0x10);
-    for (size_t i = 1; i < text.size(); i++) {
+    for (size_t i = 1; i < codes.size(); i++) {
         x += G<float>(glyph + 0x18);
-        glyph = Glyph(font, uint8_t(text[i]));
+        glyph = Glyph(font, codes[i]);
     }
     float spacing = R32(glyph + 0x20) ? G<float>(font + 0x10) : 1.0f;
     return G<float>(font + 0x08) * (x + G<float>(glyph + 0x10) + G<float>(glyph + 0x08) * spacing);
@@ -495,10 +519,10 @@ void Tick(X86Context& ctx, uint32_t ui) {
         if (edge) W32(ui + 0x44C, 0);
         if (edge || (value && !locked && (id == 3 || id == 4))) Sound(ctx);
     }
-    Write(g_fields[kTitle], kCaptions[p.mode - 1]);
+    Write(g_fields[kTitle], app::Ui(kCaptions[p.mode - 1]));
     for (size_t i = 0; i < p.slots; i++) {
         const Row* row = p.rows[p.top + i];
-        Write(g_fields[kName + i], row ? row->label : "RESTORE DEFAULTS");
+        Write(g_fields[kName + i], app::Ui(row ? row->label : "RESTORE DEFAULTS"));
         Write(g_fields[kValue + i], ValueText(p, p.top + i));
         // a value lights up with its name: +0xC a clip's matrix, then its colours
         uint32_t from = flash::FirstChild(p.name[i]), to = flash::FirstChild(p.value[i]);

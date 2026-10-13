@@ -41,12 +41,16 @@ uint32_t Chosen() {
     return 0;
 }
 
+uint32_t Index() {
+    static const uint32_t index = Chosen();
+    return index;
+}
+
 }  // namespace
 
 // after the boot's own language store
 void GameLanguage(X86Context&, uint8_t*) {
-    static const uint32_t index = Chosen();
-    if (index) W32(kLanguage, index);
+    if (uint32_t index = Index()) W32(kLanguage, index);
 }
 
 namespace game {
@@ -60,5 +64,8 @@ bool HasLanguages() {
     }();
     return any;
 }
+
+// prompts.cpp: the game shows the LANGUAGE setting's language, not English in its place
+bool Translated() { return Index() != 0; }
 
 }  // namespace game
