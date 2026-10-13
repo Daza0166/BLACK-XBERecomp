@@ -42,6 +42,11 @@ bool Message(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* resu
                 *result = 0;
                 return true;
             }
+            if (!(lp & (1 << 30)) && !MenuOpen() && input::HudKey(int(wp))) {
+                g_hide_hud = !g_hide_hud;
+                *result = 0;
+                return true;
+            }
             if (msg == WM_KEYDOWN && wp == VK_ESCAPE && MenuOpen() && !Capturing()) ToggleMenu();
             break;
         case WM_SYSCOMMAND:

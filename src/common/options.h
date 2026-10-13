@@ -35,5 +35,6 @@ const std::string& BootLanguage();
 bool HasLanguages();  // language.cpp
 inline std::atomic<float> g_fps{0};  // from the host, for the game's own counter
 inline std::atomic<bool> g_hdr_display{false};  // the window's display has Windows HDR on, from the renderer
+inline std::atomic<bool> g_hide_hud{false};  // the toggle HUD key: the gameplay HUD is not drawn
 
 }  // namespace game

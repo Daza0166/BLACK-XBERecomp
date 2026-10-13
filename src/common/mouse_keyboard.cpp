@@ -8,6 +8,7 @@
 #include <chrono>
 #include <iterator>
 #include <mutex>
+#include <string_view>
 #include <vector>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -76,6 +77,7 @@ constexpr Target kActions[] = {
     {{"next_track", "NEXT MUSIC TRACK", "N"}, 5},
     {{"back", "OBJECTIVES", "Tab"}, 13},
     {{"pause", "PAUSE MENU", "Escape"}, 12},
+    {{"hide_hud", "TOGGLE HUD", ""}, kHostKey},
     {{"settings_panel", "SETTINGS PANEL", "F10"}, kHostKey},
     {{"look_up", "LOOK UP", "Up"}, 20},
     {{"look_down", "LOOK DOWN", "Down"}, 21},
@@ -83,11 +85,13 @@ constexpr Target kActions[] = {
     {{"look_right", "LOOK RIGHT", "Right"}, 23},
 };
 constexpr size_t kCount = std::size(kActions);
-constexpr size_t kPanelAction = [] {
+constexpr size_t HostAction(std::string_view id) {
     size_t i = 0;
-    while (kActions[i].button != kHostKey) i++;
+    while (kActions[i].action.id != id) i++;
     return i;
-}();
+}
+constexpr size_t kHudAction = HostAction("hide_hud");
+constexpr size_t kPanelAction = HostAction("settings_panel");
 struct Name {
     int vk;
     const char* name;
@@ -180,6 +184,14 @@ void Clip() {
 // Windows asks for the cursor only when the mouse moves
 void RefreshCursor() {
     if (g_hwnd) PostMessageW(g_hwnd, WM_SETCURSOR, WPARAM(g_hwnd), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+}
+
+// the action is bound to this key and no key capture wants it
+bool HostKeyBound(size_t action, int vk) {
+    if (KeyCaptureUp()) return false;
+    std::lock_guard lock(g_bind_lock);
+    const auto& b = g_binds[action];
+    return std::find(b.begin(), b.end(), vk) != b.end();
 }
 
 void SetKeyboard(bool on) {
@@ -343,7 +355,7 @@ std::string Binding(size_t action) {
 
 void Bind(size_t action, int vk, int slot) {
     if (action >= kCount || slot < 0 || slot > 1 || (vk && !NameOf(vk))) return;
-    // the settings panel acts on the window's key messages, which mouse buttons do not send
+    // the host keys act on the window's key messages, which mouse buttons do not send
     if (kActions[action].button == kHostKey && Mouse(vk)) return;
     {
         std::lock_guard lock(g_bind_lock);
@@ -414,11 +426,7 @@ int PressedKey() {
     return 0;
 }
 
-bool PanelKey(int vk) {
-    if (KeyCaptureUp()) return false;
-    std::lock_guard lock(g_bind_lock);
-    const auto& b = g_binds[kPanelAction];
-    return std::find(b.begin(), b.end(), vk) != b.end();
-}
+bool PanelKey(int vk) { return HostKeyBound(kPanelAction, vk); }
+bool HudKey(int vk) { return HostKeyBound(kHudAction, vk); }
 
 }  // namespace input

@@ -7,6 +7,7 @@
 
 #include "app/app.h"
 #include "common/aspect.h"
+#include "common/options.h"
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
 
@@ -173,10 +174,15 @@ X86_FUNC(sub_000D3740) {
     __imp__sub_000D3740(ctx, base);
 }
 
-// List draw, ecx the list: a player's HUD holds its own at +0x40
+// List draw, ecx the list: a player's HUD holds its own at +0x40. Hidden, the HUD's list is not drawn (ret 4)
 X86_EXTERN_FUNC(__imp__sub_000DA4B0);
 X86_FUNC(sub_000DA4B0) {
-    g_hud = R32(ctx.esp) == kFromHud ? ctx.ecx - 0x40 : 0;
+    bool hud = R32(ctx.esp) == kFromHud;
+    if (hud && game::g_hide_hud) {
+        ctx.esp += 8;
+        return;
+    }
+    g_hud = hud ? ctx.ecx - 0x40 : 0;
     __imp__sub_000DA4B0(ctx, base);
     g_hud = 0;
 }
