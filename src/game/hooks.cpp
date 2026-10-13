@@ -357,15 +357,31 @@ void RagdollLookAhead(X86Context& ctx, uint8_t*) {
     if (float share = FrameShare(); share > 0) ctx.xmm[0].f[0] /= share;
 }
 
-// A joint past its limit is pushed back within one step and keeps that push as speed: back within a frame of
-// the game's frame rate instead. xmm6 the room to the upper or lower limit, xmm0 a locked axis' error
-void JointUpperRoom(X86Context& ctx, uint8_t*) {
-    if (ctx.xmm[6].f[0] < 0) ctx.xmm[6].f[0] *= FrameShare();
+// A joint's error, its anchors apart or a turn past its limit or lock, is put right within one step and that push
+// stays on as speed: put right within a frame of the game's frame rate instead.
+// xmm1 the gap of the anchors after the step, xmm2 the part of it the bodies' own motion makes
+void JointAnchorGap(X86Context& ctx, uint8_t*) {
+    float share = FrameShare();
+    for (int i = 0; i < 4; i++) {
+        float motion = ctx.xmm[2].f[i];
+        ctx.xmm[1].f[i] = motion + (ctx.xmm[1].f[i] - motion) * share;
+    }
 }
-void JointLowerRoom(X86Context& ctx, uint8_t*) {
-    if (ctx.xmm[6].f[0] > 0) ctx.xmm[6].f[0] *= FrameShare();
+
+// the turn a step may make on each of three axes, from [esp+0x60] to [esp+0x80]: a lock, or a limit already
+// passed, asks for a turn back
+constexpr uint32_t kJointTurnLow = 0x60;
+constexpr uint32_t kJointTurnHigh = 0x80;
+void JointTurnBack(X86Context& ctx, uint8_t*) {
+    float share = FrameShare();
+    for (uint32_t axis = 0; axis < 12; axis += 4) {
+        float& low = G<float>(ctx.esp + kJointTurnLow + axis);
+        float& high = G<float>(ctx.esp + kJointTurnHigh + axis);
+        bool locked = low == high;
+        if (locked || high < 0) high *= share;
+        if (locked || low > 0) low *= share;
+    }
 }
-void JointLockedError(X86Context& ctx, uint8_t*) { ctx.xmm[0].f[0] *= FrameShare(); }
 
 // Glass shards (0x1690D0, 0x110 bytes each) move, turn and count down once a frame of the game's frame rate
 constexpr uint32_t kShardAngle = 0xF4;
