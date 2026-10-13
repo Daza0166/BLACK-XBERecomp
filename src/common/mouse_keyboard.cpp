@@ -156,6 +156,8 @@ bool Active() { return g_hwnd && GetForegroundWindow() == g_hwnd && !app::MenuOp
 bool Down(int vk) { return GetAsyncKeyState(vk) < 0; }
 bool Mouse(int vk) { return vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2; }
 bool Play() { return NowMs() - g_take_ms < kPlayMs; }
+// Delete clears a binding on the options pages: bound to a move key it would move the selection off the row first
+bool GameDown(int vk) { return Down(vk) && !(g_menu && vk == VK_DELETE); }
 
 void Clip() {
     RECT r, cur;
@@ -246,7 +248,7 @@ void Keyboard(Pad& p) {
     bool pause = false;
     for (size_t i = 0; i < kCount; i++) {
         int b = kActions[i].button;
-        if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), Down)) continue;
+        if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), GameDown)) continue;
         used = true;
         if (b == kWalk) walk = true;
         else if (b >= 20 && !play) continue;
@@ -337,6 +339,8 @@ void Bind(size_t action, int vk, int slot) {
         for (size_t i = 0; i < keys.size() && i < 2; i++) slots[i] = keys[i];
         if (vk && slots[1 - slot] == vk) slots[1 - slot] = 0;
         slots[slot] = vk;
+        // the settings panel with no key would leave a keyboard player no way back into it
+        if (!slots[0] && !slots[1] && action == kPanelAction) return;
         keys.clear();
         for (int k : slots) {
             if (k) keys.push_back(k);
@@ -344,6 +348,24 @@ void Bind(size_t action, int vk, int slot) {
         game::Opt().keys[kActions[action].action.id] = Join(keys);
     }
     app::Save();
+}
+
+void Unbind(size_t action) {
+    if (action >= kCount || action == kPanelAction) return;
+    {
+        std::lock_guard lock(g_bind_lock);
+        g_binds[action].clear();
+        game::Opt().keys[kActions[action].action.id].clear();
+    }
+    app::Save();
+}
+
+bool TakeDeletePress() {
+    static bool held = false;
+    bool down = Down(VK_DELETE);
+    bool fresh = down && !held;
+    held = down;
+    return fresh && Active();
 }
 
 void ResetBindings() {

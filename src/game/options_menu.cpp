@@ -392,10 +392,20 @@ void StretchBar(X86Context& ctx, const Page& p, uint32_t root, uint32_t focus) {
     }
 }
 
+// Delete on a binding row
+void Clear(X86Context& ctx, const Row* row) {
+    if (!row || row->kind != app::rows::Kind::Bind) return;
+    std::string was = app::rows::Value(*row);
+    input::Unbind(size_t(row->id));
+    if (app::rows::Value(*row) != was) Sound(ctx);
+}
+
 // front end: +0x44C the menu input of this tick, 1 to 6 up down left right confirm back, +0x454 input on, +0x455 held
 // off, +0x381C 2 once the page is ready, +0x3840 its name, +0x3884 another page asked for, +0x388C page leaving, 1 as
 // it goes
 void Tick(X86Context& ctx, uint32_t ui) {
+    // read every tick, so a Delete that answers a capture is not a fresh press once it ends
+    bool clear = input::TakeDeletePress();
     Page& p = g_page;
     const char* name = static_cast<const char*>(HostPtr(ui + 0x3840));
     const Host* host = std::find_if(std::begin(kHosts), std::end(kHosts), [name](const Host& h) { return std::strcmp(name, h.page) == 0; });
@@ -450,6 +460,7 @@ void Tick(X86Context& ctx, uint32_t ui) {
         W32(ui + 0x44C, 0);
     } else if (slot < p.slots) {
         const Row* row = p.rows[p.top + slot];
+        if (clear) Clear(ctx, row);
         // past either end the rows scroll, then go round
         bool edge = true, value = row && row->kind == app::rows::Kind::Value;
         bool locked = row && !app::rows::Enabled(*row);  // greyed in the panel

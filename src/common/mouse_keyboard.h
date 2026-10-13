@@ -24,6 +24,10 @@ const Action* Actions(size_t* count);
 std::string Binding(size_t action);
 // slot 0 the key, 1 its alternate (the F10 panel's second box); vk 0 clears the slot. A key the other slot has moves.
 void Bind(size_t action, int vk, int slot = 0);
+// every key off the action; neither this nor Bind with vk 0 leaves the settings panel without a key
+void Unbind(size_t action);
+// Delete went down in the game window since the last call, the menus' key for clearing a binding
+bool TakeDeletePress();
 void ResetBindings();
 void LoadBindings();     // after the settings load
 int PressedKey();        // a bindable key or mouse button held now, 0 for none

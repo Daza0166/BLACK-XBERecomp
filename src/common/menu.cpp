@@ -406,8 +406,10 @@ std::string RowText(int id, int step, Settings& s = Get()) {
     return text;
 }
 
+constexpr const char* kUnbound = "UNBOUND";
+
 std::string KeyText(std::string keys) {
-    if (keys.empty()) return "UNBOUND";
+    if (keys.empty()) return kUnbound;
     for (char& c : keys) c = c == ',' ? '/' : char(std::toupper(uint8_t(c)));
     return keys;
 }
@@ -440,7 +442,7 @@ void RestoreDefaults(int page) {
 // the row being rebound, -1 when idle; its keys must be released before the next press binds
 std::atomic<int> g_capture{-1};
 int g_capture_slot = 0;  // its box: 0 the key, 1 the alternate
-int g_hovered_box = -1;  // the box under the mouse with a key in it, this frame
+int g_hovered_box = -1;  // the box under the mouse or focused with a key in it, this frame
 bool g_capture_armed = false;
 int g_capture_done = 0;  // frame of the last bind, the key that bound must not start another
 int g_page = kSettingsPage;
@@ -483,7 +485,7 @@ std::vector<std::string> KeyBoxes(size_t action) {
 constexpr float kKeyBoxEms = 10.0f;  // a key box's width when the row has two
 
 // label left, a box per key right (the key and its alternate side by side), ending where the other rows' values do;
-// Enter or a click on a box starts its capture, a right click sets `cleared`. The box pressed, -1 for none.
+// Enter or click starts a box's capture, right click or Delete sets `cleared`; returns the box, -1 for none
 int BindRow(const char* label, const std::vector<std::string>& keys, int capturing, int& cleared) {
     const ImGuiStyle& style = ImGui::GetStyle();
     RowBox row = MeasureRow();
@@ -498,8 +500,10 @@ int BindRow(const char* label, const std::vector<std::string>& keys, int capturi
         ImGui::SetCursorPos(ImVec2(x, row.row_y));
         ImGui::PushID(i);
         if (ImGui::InvisibleButton("##key", ImVec2(box_w, row.row_h))) pressed = i;
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) cleared = i;
-        if (ImGui::IsItemHovered() && !keys[i].empty()) g_hovered_box = i;
+        bool deleted = ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Delete, false);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right) || deleted) cleared = i;
+        bool pointed = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+        if (pointed && !keys[i].empty() && keys[i] != kUnbound) g_hovered_box = i;
         bool lit = capturing == i || ImGui::IsItemFocused() || ImGui::IsItemHovered();
         ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
                                                   ImGui::GetColorU32(lit ? ImGuiCol_Header : ImGuiCol_FrameBg));
@@ -548,8 +552,8 @@ void ValueRow(const Row& r) {
 void KeyRow(const Row& r) {
     int cleared = -1;
     int box = BindRow(r.label, KeyBoxes(size_t(r.id)), g_capture == r.id ? g_capture_slot : -1, cleared);
-    // only the alternate: an action left with no key at all could be the settings panel's own
-    if (cleared == 1 && g_capture < 0) input::Bind(size_t(r.id), 0, 1);
+    // a Delete that answered a capture is no clear
+    if (cleared >= 0 && CaptureFree()) input::Bind(size_t(r.id), 0, cleared);
     if (box < 0 || !CaptureFree()) return;
     g_capture_slot = box;
     g_capture = r.id;
@@ -617,7 +621,7 @@ void DrawFooter(float em) {
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
     const char* hint = "";
     if (g_capture >= 0) hint = "Press a key or mouse button to bind, Escape cancels";
-    else if (g_page == kKeyboardPage && g_hovered_box == 1) hint = "Right click clears the second key";
+    else if (g_page == kKeyboardPage && g_hovered_box >= 0) hint = "Right click or Delete clears the key";
     ImGui::TextUnformatted(hint);
     ImGui::PopStyleColor();
     float bw = em * 8;
