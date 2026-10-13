@@ -217,7 +217,7 @@ void Changed(bool display) {
 
 enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur,
              kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kMsaa,
-             kAmbientOcclusion, kAudioOutput };
+             kAmbientOcclusion, kAudioOutput, kHdrOutput };
 
 using rows::Kind;
 using rows::Row;
@@ -230,6 +230,7 @@ constexpr Row kSettingsRows[] = {
     {Kind::Value, kFov, "FIELD OF VIEW"},
     {Kind::Value, kViewmodelFov, "VIEWMODEL FIELD OF VIEW"},
     {Kind::Value, kVsync, "VERTICAL SYNC"},
+    {Kind::Value, kHdrOutput, "HDR OUTPUT"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
     {Kind::Heading, -1, "GRAPHICS"},
@@ -265,6 +266,7 @@ bool* ToggleFlag(Settings& s, int id) {
     switch (id) {
         case kVsync: return &s.vsync;
         case kFpsCounter: return &o.fps_counter;
+        case kHdrOutput: return &o.hdr_output;
         case kReloadBlur: return &o.reload_blur;
         case kSkipIntros: return &o.skip_intros;
         case kInvertMouse: return &o.invert_mouse;
@@ -274,6 +276,9 @@ bool* ToggleFlag(Settings& s, int id) {
 }
 
 bool DisplayRow(int id) { return id == kDisplayMode || id == kResolution; }
+
+// shown dimmed and left as it is: HDR output without an HDR display
+bool Greyed(int id) { return id == kHdrOutput && !game::g_hdr_display; }
 
 // the mode shown, stepped first when step is not zero
 Mode StepResolution(Settings& s, int step) {
@@ -389,6 +394,7 @@ void StepInputRow(int id, int step, char (&text)[64]) {
 
 // steps the value first when step is not zero
 std::string RowText(int id, int step, Settings& s = Get()) {
+    if (Greyed(id)) return "NOT SUPPORTED";
     char text[64] = "";
     if (bool* on = ToggleFlag(s, id)) {
         Flip(*on, step);
@@ -530,8 +536,11 @@ bool CaptureFree() { return g_capture < 0 && ImGui::GetFrameCount() > g_capture_
 
 void ValueRow(const Row& r) {
     bool held = g_display_held && DisplayRow(r.id);
+    bool greyed = Greyed(r.id);
+    ImGui::BeginDisabled(greyed);
     int step = OptionRow(r.label, RowText(r.id, 0, held ? g_display : Get()).c_str());
-    if (!step) return;
+    ImGui::EndDisabled();
+    if (!step || greyed) return;
     if (DisplayRow(r.id)) HoldDisplay(r.id, step);
     else RowText(r.id, step);
 }
@@ -711,6 +720,8 @@ std::string rows::Value(const Row& row, int step) {
 }
 
 void rows::Defaults(int page) { RestoreDefaults(page); }
+
+bool rows::Enabled(const Row& row) { return row.kind != Kind::Value || !Greyed(row.id); }
 
 bool MenuOpen() { return g_open.load(std::memory_order_relaxed); }
 

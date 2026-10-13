@@ -452,6 +452,7 @@ void Tick(X86Context& ctx, uint32_t ui) {
         const Row* row = p.rows[p.top + slot];
         // past either end the rows scroll, then go round
         bool edge = true, value = row && row->kind == app::rows::Kind::Value;
+        bool locked = row && !app::rows::Enabled(*row);  // greyed in the panel
         if (id == 1 && slot == 0) {
             if (p.top) {
                 p.top--;
@@ -472,7 +473,7 @@ void Tick(X86Context& ctx, uint32_t ui) {
                 p.mode = 3 - p.mode;
                 Fill(p);
             } else if (value && id >= 3 && id <= 5) {
-                app::rows::Value(*row, id == 3 ? -1 : 1);
+                if (!locked) app::rows::Value(*row, id == 3 ? -1 : 1);
             } else if (id == 5 && row) {
                 p.capture = 1;
                 p.bind = p.top + slot;
@@ -481,7 +482,7 @@ void Tick(X86Context& ctx, uint32_t ui) {
             }
         }
         if (edge) W32(ui + 0x44C, 0);
-        if (edge || (value && (id == 3 || id == 4))) Sound(ctx);
+        if (edge || (value && !locked && (id == 3 || id == 4))) Sound(ctx);
     }
     Write(g_fields[kTitle], kCaptions[p.mode - 1]);
     for (size_t i = 0; i < p.slots; i++) {

@@ -17,10 +17,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include <imgui.h>
 #include <backends/imgui_impl_dx12.h>
@@ -51,6 +53,16 @@ constexpr uint32_t kSrvCount = 3 * 32768;
 constexpr uint32_t kSamplerCount = 2048;
 constexpr uint32_t kRtvCount = 1024, kDsvCount = 256;
 constexpr DXGI_FORMAT kBgra = DXGI_FORMAT_B8G8R8A8_UNORM;
+// HDR10 output: back buffers in PQ over BT.2020; SDR white and peak in nits when Windows can't tell
+constexpr DXGI_FORMAT kHdr10Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+constexpr DXGI_FORMAT kOutFrameFormat = DXGI_FORMAT_R16G16B16A16_UNORM;  // the frame before PQ
+constexpr int kOutFrame = 0;
+constexpr int kOutPanel = 1;
+constexpr int kOutTargets = 2;
+constexpr float kDefaultPaperNits = 200.0f;
+constexpr float kDefaultPeakNits = 1000.0f;
+constexpr float kMaxPeakNits = 4000.0f;  // brighter is a display without calibration reporting PQ's 10000
+constexpr float kSdrWhiteUnit = 0.08f;  // Windows' SDR white level: 1000 is 80 nits
 
 // perf diagnostic: where a frame's time goes, logged once a second with diag::Perf
 using PerfClock = std::chrono::steady_clock;
@@ -100,6 +112,92 @@ float4 psmain(O i) : SV_Target {
     return float4(c.rgb, opts.y > 0 ? c.a : 1);
 }
 )";
+
+// HDR10 output: the frame with the panel over it, its highlights stretched towards the display's peak
+const char* kHdrHlsl = R"(
+cbuffer P : register(b1) { float4 p0; float4 p1; };
+Texture2D frame : register(t0);
+Texture2D ui : register(t1);
+struct O { float4 p : SV_Position; float2 uv : TEXCOORD0; };
+O vs(uint id : SV_VertexID) {
+    O o;
+    float2 t = float2((id << 1) & 2, id & 2);
+    o.p = float4(t * float2(2, -2) + float2(-1, 1), 0, 1);
+    o.uv = t;
+    return o;
+}
+static const float kKnee = 0.6;  // linear luminance where highlights start to stretch
+static const float3 kLum = float3(0.2126, 0.7152, 0.0722);
+static const float3x3 k709To2020 = {0.6274, 0.3293, 0.0433, 0.0691, 0.9195, 0.0114, 0.0164, 0.0880, 0.8956};
+float3 srgb_to_linear(float3 c) {
+    return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+}
+// scaled by luminance so hues keep; white reaches most, smoothly so 8 bit steps don't band
+float3 expand(float3 c, float most) {
+    float t = saturate((dot(c, kLum) - kKnee) / (1 - kKnee));
+    return c * lerp(1, most, t * t);
+}
+float3 pq(float3 nits) {
+    float3 y = pow(saturate(nits / 10000), 0.1593017578125);
+    return pow((0.8359375 + 18.8515625 * y) / (1 + 18.6875 * y), 78.84375);
+}
+// p0: SDR white nits, peak nits
+float4 hdr10(O i) : SV_Target {
+    int3 px = int3(i.p.xy, 0);
+    float3 f = min(expand(srgb_to_linear(frame.Load(px).rgb), max(p0.y / p0.x, 1)) * p0.x, p0.y);
+    float4 u = ui.Load(px);
+    float3 panel = srgb_to_linear(u.a > 0 ? u.rgb / u.a : 0) * p0.x;
+    return float4(pq(mul(k709To2020, lerp(f, panel, u.a))), 1);
+}
+)";
+
+// the output showing monitor mon, false when no adapter has it
+bool FindOutput(IDXGIFactory4* factory, HMONITOR mon, DXGI_OUTPUT_DESC1& desc) {
+    ComPtr<IDXGIAdapter1> adapter;
+    for (UINT a = 0; factory->EnumAdapters1(a, &adapter) != DXGI_ERROR_NOT_FOUND; a++) {
+        ComPtr<IDXGIOutput> output;
+        for (UINT o = 0; adapter->EnumOutputs(o, &output) != DXGI_ERROR_NOT_FOUND; o++) {
+            ComPtr<IDXGIOutput6> output6;
+            if (FAILED(output.As(&output6)) || FAILED(output6->GetDesc1(&desc))) continue;
+            if (desc.Monitor == mon) return true;
+        }
+    }
+    return false;
+}
+
+// Windows' SDR content brightness on monitor mon, in nits
+float SdrWhiteNits(HMONITOR mon) {
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof(info);
+    UINT32 path_count = 0;
+    UINT32 mode_count = 0;
+    if (!GetMonitorInfoW(mon, &info)) return kDefaultPaperNits;
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count) != ERROR_SUCCESS) {
+        return kDefaultPaperNits;
+    }
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
+    LONG queried = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &path_count, paths.data(), &mode_count, modes.data(),
+                                      nullptr);
+    if (queried != ERROR_SUCCESS) return kDefaultPaperNits;
+    for (UINT32 i = 0; i < path_count; i++) {
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+        source.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+        source.header.size = sizeof(source);
+        source.header.adapterId = paths[i].sourceInfo.adapterId;
+        source.header.id = paths[i].sourceInfo.id;
+        if (DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS) continue;
+        if (std::wcscmp(source.viewGdiDeviceName, info.szDevice) != 0) continue;
+        DISPLAYCONFIG_SDR_WHITE_LEVEL white{};
+        white.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+        white.header.size = sizeof(white);
+        white.header.adapterId = paths[i].targetInfo.adapterId;
+        white.header.id = paths[i].targetInfo.id;
+        if (DisplayConfigGetDeviceInfo(&white.header) != ERROR_SUCCESS) break;
+        return float(white.SDRWhiteLevel) * kSdrWhiteUnit;
+    }
+    return kDefaultPaperNits;
+}
 
 const char* kDepthHlsl = R"(
 #ifdef MS
@@ -569,7 +667,20 @@ private:
     ID3DBlob* Compile(const std::string& src, const char* entry, const char* profile, uint64_t& hash);
     ID3D12PipelineState* Pipeline(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps);
     ID3D12PipelineState* BlitPipeline(DXGI_FORMAT rtv, bool over, uint32_t samples);
+    // Present, in call order, each callee right after its caller
+    void UpdateHdrDisplay();
     void ResizeSwap();
+    bool ResizeBackBuffers(uint32_t w, uint32_t h, DXGI_FORMAT fmt, DXGI_COLOR_SPACE_TYPE space);
+    void DrawFrame(Target* t, uint32_t bi);
+    void DrawSdrFrame(Target* t, D3D12_CPU_DESCRIPTOR_HANDLE bb);
+    bool EnsureOutTargets();
+    bool CreateOutTarget(int i, DXGI_FORMAT fmt);
+    void DrawHdrFrame(Target* t, D3D12_CPU_DESCRIPTOR_HANDLE bb);
+    void BlitFrame(Target& t, DXGI_FORMAT rtv);
+    void RenderUi();
+    D3D12_CPU_DESCRIPTOR_HANDLE OutView(int i) {
+        return Cpu(rtv_heap_.Get(), kRtvCount + kFrames + kAoTargets + i, rtv_inc_);
+    }
     float Scale() const override { return scale_; }
     // into: a copy from an earlier call to draw over again, in state into_state
     ComPtr<ID3D12Resource> Shrink(ID3D12Resource* src, D3D12_RESOURCE_STATES& st, DXGI_FORMAT fmt, uint32_t w, uint32_t h, uint32_t taps = 1,
@@ -642,6 +753,17 @@ private:
     std::atomic<uint64_t> presents_seen_{0};    // presents_ for DeliverLate
     Assembled asm_;  // kept between draws for its buffers
     bool tearing_ = false;
+    // HDR10 output: the window's display, the output asked and in use, the frame and panel targets it draws first
+    HMONITOR hdr_mon_ = nullptr;
+    bool hdr_display_ = false;
+    bool hdr_want_ = false;
+    bool hdr_out_ = false;
+    float paper_nits_ = kDefaultPaperNits;
+    float peak_nits_ = kDefaultPeakNits;
+    ComPtr<ID3D12Resource> out_[kOutTargets];
+    D3D12_RESOURCE_STATES out_state_[kOutTargets] = {};
+    uint32_t out_w_ = 0;
+    uint32_t out_h_ = 0;
     uint64_t presents_ = 0;
     double fps_ = 0;
     std::chrono::steady_clock::time_point fps_t_ = std::chrono::steady_clock::now();
@@ -708,7 +830,7 @@ bool D3D12Backend::Init(uint32_t width, uint32_t height) {
     };
     srv_inc_ = heap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvCount, true, srv_heap_);
     smp_inc_ = heap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, kSamplerCount, true, smp_heap_);
-    rtv_inc_ = heap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvCount + kFrames + kAoTargets, false, rtv_heap_);
+    rtv_inc_ = heap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvCount + kFrames + kAoTargets + kOutTargets, false, rtv_heap_);
     dsv_inc_ = heap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvCount, false, dsv_heap_);
     heap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, true, ui_heap_);
     for (uint32_t i = kRtvCount; i-- > 0;) free_rtv_.push_back(i);
@@ -2218,12 +2340,31 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count, 
     }
 }
 
+// the output the window's display has: a factory made before Windows HDR was switched no longer tells
+void D3D12Backend::UpdateHdrDisplay() {
+    HMONITOR mon = MonitorFromWindow(static_cast<HWND>(app::Window()), MONITOR_DEFAULTTONEAREST);
+    if (mon == hdr_mon_ && factory_->IsCurrent()) return;
+    hdr_mon_ = mon;
+    ComPtr<IDXGIFactory4> fresh;
+    if (!factory_->IsCurrent() && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&fresh)))) factory_ = fresh;
+    DXGI_OUTPUT_DESC1 desc{};
+    bool found = FindOutput(factory_.Get(), mon, desc);
+    hdr_display_ = found && desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+    bool known_peak = found && desc.MaxLuminance > 0 && desc.MaxLuminance <= kMaxPeakNits;
+    peak_nits_ = known_peak ? desc.MaxLuminance : kDefaultPeakNits;
+    paper_nits_ = SdrWhiteNits(mon);
+    game::g_hdr_display = hdr_display_;
+    LOGR("Display HDR: %s, peak %.0f nits, SDR white %.0f nits", hdr_display_ ? "on" : "off", peak_nits_,
+         paper_nits_);
+}
+
 void D3D12Backend::ResizeSwap() {
     HWND hwnd = static_cast<HWND>(app::Window());
     RECT rc;
     GetClientRect(hwnd, &rc);
     uint32_t w = std::max<LONG>(rc.right - rc.left, 1), h = std::max<LONG>(rc.bottom - rc.top, 1);
-    if (w == bb_w_ && h == bb_h_) return;
+    bool hdr = hdr_display_ && game::Opt().hdr_output;
+    if (w == bb_w_ && h == bb_h_ && hdr == hdr_want_) return;
     Flush();
     for (auto& f : frames_) {
         if (f.fence) {
@@ -2232,13 +2373,134 @@ void D3D12Backend::ResizeSwap() {
         }
     }
     for (auto& b : bb_) b.Reset();
-    swap_->ResizeBuffers(kFrames, w, h, DXGI_FORMAT_B8G8R8A8_UNORM, tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
+    hdr_want_ = hdr;
+    hdr_out_ = hdr && ResizeBackBuffers(w, h, kHdr10Format, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+    if (!hdr_out_) ResizeBackBuffers(w, h, kBgra, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
+    if (hdr && !hdr_out_) LOGR("Display HDR: the swap chain can't show HDR10, SDR it is");
     for (int i = 0; i < kFrames; i++) {
         swap_->GetBuffer(i, IID_PPV_ARGS(&bb_[i]));
         dev_->CreateRenderTargetView(bb_[i].Get(), nullptr, Cpu(rtv_heap_.Get(), kRtvCount + i, rtv_inc_));
     }
     bb_w_ = w;
     bb_h_ = h;
+}
+
+// false when the swap chain can't present in that colour space
+bool D3D12Backend::ResizeBackBuffers(uint32_t w, uint32_t h, DXGI_FORMAT fmt, DXGI_COLOR_SPACE_TYPE space) {
+    UINT flags = tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+    if (FAILED(swap_->ResizeBuffers(kFrames, w, h, fmt, flags))) return false;
+    UINT support = 0;
+    swap_->CheckColorSpaceSupport(space, &support);
+    if (!(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)) return false;
+    return SUCCEEDED(swap_->SetColorSpace1(space));
+}
+
+void D3D12Backend::DrawFrame(Target* t, uint32_t bi) {
+    D3D12_RESOURCE_STATES bs = D3D12_RESOURCE_STATE_PRESENT;
+    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), kRtvCount + bi, rtv_inc_);
+    // without its targets an HDR10 back buffer stays black: the SDR pipelines don't match its format
+    if (!hdr_out_) {
+        DrawSdrFrame(t, rh);
+    } else if (EnsureOutTargets()) {
+        DrawHdrFrame(t, rh);
+    } else {
+        float black[4] = {0, 0, 0, 1};
+        cl_->ClearRenderTargetView(rh, black, 0, nullptr);
+    }
+    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_PRESENT);
+}
+
+void D3D12Backend::DrawSdrFrame(Target* t, D3D12_CPU_DESCRIPTOR_HANDLE bb) {
+    float black[4] = {0, 0, 0, 1};
+    cl_->ClearRenderTargetView(bb, black, 0, nullptr);
+    cl_->OMSetRenderTargets(1, &bb, FALSE, nullptr);
+    bound_rt_ = bound_ds_ = nullptr;
+    if (t) BlitFrame(*t, kBgra);
+    RenderUi();
+}
+
+bool D3D12Backend::EnsureOutTargets() {
+    if (out_[kOutFrame] && out_[kOutPanel] && out_w_ == bb_w_ && out_h_ == bb_h_) return true;
+    out_w_ = bb_w_;
+    out_h_ = bb_h_;
+    return CreateOutTarget(kOutFrame, kOutFrameFormat) && CreateOutTarget(kOutPanel, kBgra);
+}
+
+bool D3D12Backend::CreateOutTarget(int i, DXGI_FORMAT fmt) {
+    if (out_[i]) Release(std::move(out_[i]));
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC td{};
+    td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    td.Width = bb_w_;
+    td.Height = bb_h_;
+    td.DepthOrArraySize = td.MipLevels = 1;
+    td.Format = fmt;
+    td.SampleDesc.Count = 1;
+    td.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    out_state_[i] = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    HRESULT hr = dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, out_state_[i], nullptr,
+                                               IID_PPV_ARGS(&out_[i]));
+    if (FAILED(hr)) {
+        LOGE("d3d12: no %ux%u HDR10 output target", bb_w_, bb_h_);
+        return false;
+    }
+    dev_->CreateRenderTargetView(out_[i].Get(), nullptr, OutView(i));
+    return true;
+}
+
+// frame and panel into their own targets, then both into the back buffer as HDR10, panel at SDR white
+void D3D12Backend::DrawHdrFrame(Target* t, D3D12_CPU_DESCRIPTOR_HANDLE bb) {
+    D3D12_CPU_DESCRIPTOR_HANDLE frame = OutView(kOutFrame);
+    D3D12_CPU_DESCRIPTOR_HANDLE panel = OutView(kOutPanel);
+    float clear[4] = {0, 0, 0, 0};
+    for (int i = 0; i < kOutTargets; i++) Transition(out_[i].Get(), out_state_[i], D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cl_->ClearRenderTargetView(frame, clear, 0, nullptr);
+    cl_->ClearRenderTargetView(panel, clear, 0, nullptr);
+    cl_->OMSetRenderTargets(1, &frame, FALSE, nullptr);
+    bound_rt_ = bound_ds_ = nullptr;
+    if (t) BlitFrame(*t, kOutFrameFormat);
+    cl_->OMSetRenderTargets(1, &panel, FALSE, nullptr);
+    RenderUi();
+    Begin();  // RenderUi left ImGui's heap and root signature bound
+    for (int i = 0; i < kOutTargets; i++) {
+        Transition(out_[i].Get(), out_state_[i], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    }
+    ID3D12Resource* const src[3] = {out_[kOutFrame].Get(), out_[kOutPanel].Get(), nullptr};
+    const DXGI_FORMAT fmt[3] = {kOutFrameFormat, kBgra, kBgra};
+    float p[8] = {paper_nits_, peak_nits_, 0, 0};
+    Pass(kHdrHlsl, "hdr10", kHdr10Format, bb, bb_w_, bb_h_, src, fmt, p, -1);
+}
+
+// the frame letterboxed to the game's aspect into the bound target
+void D3D12Backend::BlitFrame(Target& t, DXGI_FORMAT rtv) {
+    float aspect = game::Aspect();
+    float w = float(bb_w_);
+    float h = float(bb_h_);
+    float vw = std::min(w, h * aspect);
+    float vh = vw / aspect;
+    float uv[4] = {0, 0, 1, 1};
+    D3D12_VIEWPORT vp{(w - vw) / 2, (h - vh) / 2, vw, vh, 0, 1};
+    D3D12_RECT sc{0, 0, LONG(bb_w_), LONG(bb_h_)};
+    cl_->RSSetViewports(1, &vp);
+    cl_->RSSetScissorRects(1, &sc);
+    D3D12_RESOURCE_STATES* st;
+    if (ID3D12Resource* r = Flat(t, st)) {
+        Transition(r, *st, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        Blit(r, t.fmt, uv, gamma_, false, 1, 1, rtv);
+    }
+}
+
+void D3D12Backend::RenderUi() {
+    std::lock_guard lock(app::UiLock());
+    ImGui_ImplDX12_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+    if (app::kGame.ui) app::kGame.ui(fps_);
+    ImGui::Render();
+    ID3D12DescriptorHeap* uh[] = {ui_heap_.Get()};
+    cl_->SetDescriptorHeaps(1, uh);
+    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
 }
 
 void D3D12Backend::Present(const Surface& front) {
@@ -2269,6 +2531,7 @@ void D3D12Backend::Present(const Surface& front) {
         cap_seen_.clear();
         cap_sh_.clear();
     }
+    UpdateHdrDisplay();
     ResizeSwap();
     Target* t = GetTarget(front, false);
     if (t && CpuWrote(*t)) UploadTarget(*t, front);
@@ -2295,40 +2558,7 @@ void D3D12Backend::Present(const Surface& front) {
     }
     Transition(lut_.Get(), lut_state_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-    uint32_t bi = swap_->GetCurrentBackBufferIndex();
-    D3D12_RESOURCE_STATES bs = D3D12_RESOURCE_STATE_PRESENT;
-    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    D3D12_CPU_DESCRIPTOR_HANDLE rh = Cpu(rtv_heap_.Get(), kRtvCount + bi, rtv_inc_);
-    float black[4] = {0, 0, 0, 1};
-    cl_->ClearRenderTargetView(rh, black, 0, nullptr);
-    cl_->OMSetRenderTargets(1, &rh, FALSE, nullptr);
-    bound_rt_ = bound_ds_ = nullptr;
-    if (t) {
-        float aspect = game::Aspect(), w = float(bb_w_), h = float(bb_h_);
-        float vw = std::min(w, h * aspect), vh = vw / aspect;
-        float uv[4] = {0, 0, 1, 1};
-        D3D12_VIEWPORT vp{(w - vw) / 2, (h - vh) / 2, vw, vh, 0, 1};
-        D3D12_RECT sc{0, 0, LONG(bb_w_), LONG(bb_h_)};
-        cl_->RSSetViewports(1, &vp);
-        cl_->RSSetScissorRects(1, &sc);
-        D3D12_RESOURCE_STATES* st;
-        if (ID3D12Resource* r = Flat(*t, st)) {
-            Transition(r, *st, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            Blit(r, t->fmt, uv, gamma_, false);
-        }
-    }
-    {
-        std::lock_guard lock(app::UiLock());
-        ImGui_ImplDX12_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-        if (app::kGame.ui) app::kGame.ui(fps_);
-        ImGui::Render();
-        ID3D12DescriptorHeap* uh[] = {ui_heap_.Get()};
-        cl_->SetDescriptorHeaps(1, uh);
-        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl_.Get());
-    }
-    Transition(bb_[bi].Get(), bs, D3D12_RESOURCE_STATE_PRESENT);
+    DrawFrame(t, swap_->GetCurrentBackBufferIndex());
     Submit(false);
     bool vsync = app::Get().vsync;
     auto perf_swap = PerfClock::now();

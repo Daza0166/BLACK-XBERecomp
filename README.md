@@ -20,6 +20,7 @@ This port was created using the [Xbox XBE Recomp](https://github.com/TGP482/Xbox
 - **Viewmodel Field of View** - Adjusts the first-person weapon and arms field of view.
 - **Max Frame Rate** - Caps the frame rate to your monitor's refresh rate or a custom value, or removes the cap entirely, replacing the Xbox's 30 FPS limiter.
 - **V-Sync** - Reduces screen tearing.
+- **HDR Output** - Enables HDR10 output on displays with Windows HDR turned on, detected automatically. Highlights extend up to the display's peak brightness.
 - **FPS Counter** - Displays the frame rate on screen.
 
 ### Graphics

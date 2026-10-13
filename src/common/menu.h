@@ -27,6 +27,8 @@ struct Row {
 const Row* Page(int page, size_t* count);         // 0 the settings, 1 mouse and keyboard
 std::string Value(const Row& row, int step = 0);  // what the row shows, stepped first when step is not zero
 void Defaults(int page);
+// false for a row shown greyed that takes no change: HDR output without an HDR display
+bool Enabled(const Row& row);
 
 }  // namespace rows
 
