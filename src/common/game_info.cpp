@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <iterator>
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -87,6 +90,9 @@ void Load(const void* table) {
     Options& o = Opt();
     o.monitor = t["monitor"].value_or(o.monitor);
     o.mouse_sensitivity = float(t["mouse_sensitivity"].value_or(double(o.mouse_sensitivity)));
+    std::string language = t["language"].value_or(o.language);
+    bool known = std::find(std::begin(kLanguages), std::end(kLanguages), language) != std::end(kLanguages);
+    if (known) o.language = language;
     if (const toml::table* keys = t["keys"].as_table())
         for (auto&& [id, value] : *keys)
             if (auto v = value.value<std::string>()) o.keys[std::string(id.str())] = *v;
@@ -94,6 +100,7 @@ void Load(const void* table) {
 
 // after the settings load, before boot
 void Init() {
+    BootLanguage();  // latched before the panel can change the setting
     input::LoadBindings();
     audio::SetOutputMode(Opt().audio_output);
 }
@@ -103,6 +110,7 @@ void Save(void* table) {
     const Options& o = Opt();
     t.insert("monitor", o.monitor);
     t.insert("mouse_sensitivity", double(o.mouse_sensitivity));
+    t.insert("language", o.language);
     toml::table keys;
     for (const auto& [id, value] : o.keys) keys.insert(id, value);
     t.insert("keys", keys);
@@ -113,6 +121,11 @@ void Save(void* table) {
 Options& Opt() {
     static Options o;
     return o;
+}
+
+const std::string& BootLanguage() {
+    static const std::string language = Opt().language;
+    return language;
 }
 
 }  // namespace game

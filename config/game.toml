@@ -545,3 +545,14 @@ call = "HudItem"
 [[hook]]
 at = 0x1EE9A5
 call = "AmbientOcclusion"
+
+# src/game/language.cpp
+[[hook]]
+at = 0x1F8120
+call = "GameLanguage"
+after = true
+
+[[hook]]
+at = 0x1F813B
+call = "GameLanguage"
+after = true

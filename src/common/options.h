@@ -7,6 +7,9 @@
 // the game's own settings, in the settings file through app::kGame.options
 namespace game {
 
+// the languages, saved by these codes: English, French, German, Italian, Spanish
+inline constexpr const char* kLanguages[] = {"int", "fra", "deu", "ita", "esp"};
+
 struct Options {
     std::string monitor;  // its device name, \\.\DISPLAY2; empty the primary
     bool skip_intros = false;  // logos at boot and the film after pressing start
@@ -23,9 +26,13 @@ struct Options {
     uint32_t viewmodel_fov = 70;  // the gun and arms, the same measure
     uint32_t walk_speed = 50;  // percent of running, while the walk key is held
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
+    std::string language = "int";  // one of kLanguages
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
 };
 Options& Opt();
+// the language setting as this run started, the language the game boots in
+const std::string& BootLanguage();
+bool HasLanguages();  // language.cpp
 inline std::atomic<float> g_fps{0};  // from the host, for the game's own counter
 inline std::atomic<bool> g_hdr_display{false};  // the window's display has Windows HDR on, from the renderer
 
