@@ -1,5 +1,6 @@
 // The game's language. This build sets English (US) at boot whatever the console's language is; the LANGUAGE setting
-// takes its place when the game files have that language's strings, else the game stays in English.
+// takes its place when the game files have that language's strings, else the game stays in English. A Europe disc
+// has UK English strings in place of the US ones, which its own build picks for English.
 #include <string>
 #include <vector>
 
@@ -20,6 +21,8 @@ struct Language {
     const char* suffix;  // Main%s.bin
 };
 constexpr Language kLanguages[] = {{"fra", 4, "Fr"}, {"deu", 3, "Ge"}, {"ita", 6, "It"}, {"esp", 5, "Sp"}};
+constexpr Language kUs = {"int", 1, "US"};
+constexpr Language kUk = {"int", 0, "UK"};
 
 std::string StringsFile(const Language& l) { return std::string("D:\\Language\\Strings\\Main") + l.suffix + ".bin"; }
 
@@ -28,7 +31,7 @@ bool OnDisc(const Language& l) {
     return ReadGameFile(StringsFile(l), file);
 }
 
-// the index to boot in, 0 to keep the game's
+// the index to boot in
 uint32_t Chosen() {
     for (const Language& l : kLanguages) {
         if (game::BootLanguage() != l.code) continue;
@@ -38,7 +41,10 @@ uint32_t Chosen() {
         }
         LOGW("language: no %s, the game stays in English", StringsFile(l).c_str());
     }
-    return 0;
+    bool uk_only = OnDisc(kUk) && !OnDisc(kUs);
+    if (!uk_only) return kUs.index;
+    LOGI("language: %s", kUk.suffix);
+    return kUk.index;
 }
 
 uint32_t Index() {
@@ -50,7 +56,7 @@ uint32_t Index() {
 
 // after the boot's own language store
 void GameLanguage(X86Context&, uint8_t*) {
-    if (uint32_t index = Index()) W32(kLanguage, index);
+    W32(kLanguage, Index());
 }
 
 namespace game {
@@ -66,6 +72,9 @@ bool HasLanguages() {
 }
 
 // prompts.cpp: the game shows the LANGUAGE setting's language, not English in its place
-bool Translated() { return Index() != 0; }
+bool Translated() {
+    uint32_t index = Index();
+    return index != kUs.index && index != kUk.index;
+}
 
 }  // namespace game
