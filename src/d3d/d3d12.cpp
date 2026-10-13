@@ -543,6 +543,17 @@ bool UnitTexcoords(const Assembled& a) {
     return any;
 }
 
+constexpr uint32_t kTaddressWrap = 1;
+constexpr uint32_t kTaddressClamp = 3;
+
+// UnitTexcoords only changes stages that wrap
+bool AnyStageWraps(const State& s) {
+    for (const auto& t : s.tss) {
+        if (t[kTssAddressU] == kTaddressWrap || t[kTssAddressV] == kTaddressWrap) return true;
+    }
+    return false;
+}
+
 D3D12_TEXTURE_ADDRESS_MODE Address(uint32_t v) {
     switch (v) {
         case 2: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR;
@@ -1890,8 +1901,6 @@ ID3D12Resource* D3D12Backend::BindTexture(const State& s, int stage, TexInfo& in
 
 uint32_t D3D12Backend::Samplers(const State& s, const TexInfo info[4], const D3D12_SHADER_RESOURCE_VIEW_DESC sv[4],
                                 bool clamp) {
-    constexpr uint32_t kTaddressWrap = 1;
-    constexpr uint32_t kTaddressClamp = 3;
     D3D12_SAMPLER_DESC sd[4] = {};
     uint32_t aniso = app::Get().aniso;
     for (int i = 0; i < 4; i++) {
@@ -1994,8 +2003,13 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t 
     draw_ds_ = bound_ds_;
     for (int i = 0; i < 4; i++) res[i] = BindTexture(s, i, info[i], sv[i]);
     g_perf.bind += PerfMs(perf_t);
-    // textures may have recorded copies that unbound the targets
-    if (!BindTargets(s)) return;
+    // textures may have recorded copies that unbound the targets or moved them out of their target states
+    if (bound_rt_ != draw_rt_ || bound_ds_ != draw_ds_) {
+        if (!BindTargets(s)) return;
+    } else {
+        if (bound_rt_) Transition(bound_rt_->res.Get(), bound_rt_->state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        if (bound_ds_) Transition(bound_ds_->res.Get(), bound_ds_->state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    }
     PixelKey pk = MakePixelKey(s, info);
     uint64_t pkh = Hash(&pk, sizeof(pk));
     uint64_t ph;
@@ -2245,7 +2259,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t 
         dev_->CreateShaderResourceView(res[i], &sv[i], Cpu(srv_heap_.Get(), slot + i, srv_inc_));
     }
     cl_->SetGraphicsRootDescriptorTable(2, Gpu(srv_heap_.Get(), slot, srv_inc_));
-    uint32_t samplers = Samplers(s, info, sv, UnitTexcoords(a));
+    uint32_t samplers = Samplers(s, info, sv, AnyStageWraps(s) && UnitTexcoords(a));
     cl_->SetGraphicsRootDescriptorTable(3, Gpu(smp_heap_.Get(), samplers, smp_inc_));
 
     // viewport covers the target, the guest viewport is in the shader; scissor clips to it
