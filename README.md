@@ -33,8 +33,9 @@ This port was created using the [Xbox XBE Recomp](https://github.com/TGP482/Xbox
 - **Ambient Occlusion** - Adds screen space ambient occlusion, creating soft contact shadows where surfaces meet. Choose between SSAO and GTAO.
 - **Reload Blur** - Toggles the blur effect while reloading.
 
-### Mouse and Keyboard
-Full keyboard and mouse support with raw input, adjustable sensitivity, inverted look and rebindable controls.
+### Input
+- **Mouse and Keyboard** - Full keyboard and mouse support with raw input, adjustable sensitivity, inverted look and rebindable controls.
+- **Controller** - Controller with SDL3 support. 
 
 ### General
 - **Skip Intro** - Skips the intro logos.
