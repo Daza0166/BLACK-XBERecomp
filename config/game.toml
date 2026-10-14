@@ -535,6 +535,11 @@ call = "MenuPrompts"
 at = 0x124374
 call = "OptionsMenu"
 
+# src/game/exit_menu.cpp, after the cursor's input
+[[hook]]
+at = 0x124374
+call = "ExitMenu"
+
 [[hook]]
 at = 0x12437B
 call = "NameEntry"
