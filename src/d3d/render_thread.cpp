@@ -61,15 +61,21 @@ struct Batch {
 };
 
 // the plain data in State, around its shader pointers and the resource headers (sent as copies); of the transforms only
-// view, projection, texture and world are drawn with
+// view, projection, texture and world are drawn with, of the simple render states only those src/d3d/d3d12.cpp and
+// MakePixelKey read: alpha test to depth offset, the combiner constants and the final combiner constants
 struct Range {
     size_t off, len;
 };
 size_t At(const State& s, const void* p) { return size_t(static_cast<const uint8_t*>(p) - reinterpret_cast<const uint8_t*>(&s)); }
+// bytes of the simple render states from method first to method last
+size_t SimpleBytes(uint32_t first, uint32_t last) { return size_t(last - first) + sizeof(uint32_t); }
 std::vector<Range> StateRanges() {
     static const State s;
     return {
-        {At(s, &s.simple), At(s, &s.textures) - At(s, &s.simple)},
+        {At(s, &s.simple[kMAlphaTestEnable >> 2]), SimpleBytes(kMAlphaTestEnable, kMDepthOffset)},
+        {At(s, &s.simple[kMPsConstant0 >> 2]), SimpleBytes(kMPsConstant0, kMPsAlphaOutputs - 4)},
+        {At(s, &s.simple[kMPsFinalConstant0 >> 2]), SimpleBytes(kMPsFinalConstant0, kMPsFinalConstant1)},
+        {At(s, &s.rs), At(s, &s.textures) - At(s, &s.rs)},
         {At(s, &s.index_buffer), At(s, &s.vs) - At(s, &s.index_buffer)},
         {At(s, &s.vsc), At(s, &s.rt) - At(s, &s.vsc)},
         {At(s, &s.scissor_count), At(s, &s.transforms) - At(s, &s.scissor_count)},
