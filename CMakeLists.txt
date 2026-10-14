@@ -19,7 +19,7 @@ else()
 endif()
 include(${SDK}/cmake/XbeRecomp.cmake)
 # src/sound, src/d3d, src/audio and src/common/game_files.cpp replace the SDK ones
-list(FILTER XBE_RUNTIME_SOURCES EXCLUDE REGEX "/(xdk/dsound|xdk/d3d8|gpu/d3d12|audio/xaudio2|app/game_files)\\.cpp$")
+list(FILTER XBE_RUNTIME_SOURCES EXCLUDE REGEX "/(xdk/dsound|xdk/d3d8|gpu/d3d12|gpu/render_thread|audio/xaudio2|app/game_files)\\.cpp$")
 
 file(GLOB XBE_HOST_SOURCES CONFIGURE_DEPENDS src/*/*.cpp)
 list(FILTER XBE_HOST_SOURCES EXCLUDE REGEX "/src/game/")
