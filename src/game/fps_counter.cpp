@@ -3,10 +3,12 @@
 #include <bit>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 
 #include "app/app.h"
 #include "common/aspect.h"
 #include "common/options.h"
+#include "game/flash.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
 
@@ -23,15 +25,22 @@ constexpr uint32_t kFont = 0x2F433C, kWidthScale = 0x08, kLastGlyph = 0x1C, kGly
 constexpr uint32_t kGlyphSize = 0x28, kAdvance = 0x18, kCode = 0x1C;
 // UI object: +0x3840 page name
 constexpr uint32_t kUi = 0x2D199C, kPageName = 0x3840;
+// clip: +0x1C x, +0x20 y in its parent, +0x50 next
+constexpr uint32_t kClipX = 0x1C, kClipY = 0x20, kNextClip = 0x50;
 
 constexpr float kSize = 15, kMargin = 8;  // on a frame 480 high
 constexpr float kGrey = 186 / 255.0f;  // the HUD's text
 
-// as SCDA: ends 80 in from the right, on the row of the menu's button legend
+// as SCDA: at rest it ends 80 in from the right, on the row of the menu's button legend
 constexpr char kWatermark[] = "XBE Recomp V1";
 constexpr float kWatermarkRight = 80, kWatermarkTop = 427;
-// also BlackTitleMenu2 and the _wide pages
-constexpr char kTitleMenu[] = "BlackTitleMenu";
+// the page's Main slides its legend in from the right and back out; x is the confirm prompt's at rest (frame 29)
+struct TitlePage {
+    const char* name;
+    float legend_rest_x;
+};
+// longest name first, they are compared by prefix
+constexpr TitlePage kTitlePages[] = {{"BlackTitleMenu2", -44.0f}, {"BlackTitleMenu", -53.5f}};
 
 struct View {
     float unit;    // viewport pixels per line of a 480 frame
@@ -69,11 +78,38 @@ void DrawText(X86Context& ctx, uint32_t font, const View& view, const char* text
     }
 }
 
-bool OnTitleMenu() {
+const TitlePage* CurrentTitlePage() {
     uint32_t ui = R32(kUi);
-    if (!ui) return false;
-    const char* page = static_cast<const char*>(HostPtr(ui + kPageName));
-    return _strnicmp(page, kTitleMenu, sizeof kTitleMenu - 1) == 0;
+    if (!ui) return nullptr;
+    const char* name = static_cast<const char*>(HostPtr(ui + kPageName));
+    for (const TitlePage& page : kTitlePages)
+        if (_strnicmp(name, page.name, std::strlen(page.name)) == 0) return &page;
+    return nullptr;
+}
+
+uint32_t Child(uint32_t clip, const char* name) {
+    int left = 4096;
+    for (uint32_t child = flash::FirstChild(clip); child && left; child = R32(child + kNextClip), left--)
+        if (flash::IsClip(child) && _stricmp(flash::Name(child), name) == 0) return child;
+    return 0;
+}
+
+// a prompt is a clip of a "Button" icon and a "Text"; the lowest one confirms
+uint32_t ConfirmPrompt(uint32_t main) {
+    uint32_t found = 0;
+    int left = 4096;
+    for (uint32_t child = flash::FirstChild(main); child && left; child = R32(child + kNextClip), left--) {
+        if (!flash::IsClip(child) || !Child(child, "Button") || !Child(child, "Text")) continue;
+        if (!found || G<float>(child + kClipY) > G<float>(found + kClipY)) found = child;
+    }
+    return found;
+}
+
+// how far the legend is from its rest, in lines of a 480 frame like a stage pixel; none while the page has no legend
+std::optional<float> LegendSlide(const TitlePage& page) {
+    uint32_t prompt = ConfirmPrompt(Child(flash::Level(4), "Main"));
+    if (!prompt) return std::nullopt;
+    return G<float>(prompt + kClipX) - page.legend_rest_x;
 }
 
 }  // namespace
@@ -83,13 +119,15 @@ void DrawOverlay(X86Context& ctx, uint8_t*) {
     uint32_t font = R32(kFont), viewport = SYM(D3D_Device) + XDK_CDevice_Viewport;
     float w = float(R32(viewport + 8)), h = float(R32(viewport + 12));
     bool fps = game::Opt().fps_counter;
-    bool watermark = OnTitleMenu();
+    const TitlePage* title = CurrentTitlePage();
+    std::optional<float> slide = title ? LegendSlide(*title) : std::nullopt;
+    bool watermark = slide.has_value();
     if (!(fps || watermark) || !font || !(h > 0)) return;
     View view{h / 480, w / h / game::Aspect()};
     float& width = G<float>(font + kWidthScale);
     float game_width = width;
     float output_width = game::Aspect() * 480;
-    float watermark_x = output_width - kWatermarkRight - TextWidth(font, kWatermark);
+    float watermark_x = output_width - kWatermarkRight - TextWidth(font, kWatermark) + slide.value_or(0.0f);
     CallGuest(ctx, kBegin, {});
     width = game_width * view.narrow;
     if (fps) {
