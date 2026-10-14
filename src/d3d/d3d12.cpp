@@ -520,6 +520,17 @@ D3D12_STENCIL_OP StencilOp(uint32_t v) {
     }
 }
 
+// The game's 2D layer (menus, text, HUD) leaves oPos.w at 0: screen space. Clamped to 2^-64 its clip space
+// coordinates are near 1e-20 and AMD drops parts of those draws; w = 1 draws the same, as XYZRHW does
+std::string VertexProgram(const VertexShader& vs, uint16_t regs, uint64_t decode) {
+    const std::string clamp = "    p.w = magclamp(p.w);\n";
+    const std::string screen_space = "    p.w = p.w == 0 ? 1 : magclamp(p.w);\n";
+    std::string src = VertexProgramHlsl(vs.program, regs, decode);
+    size_t at = src.find(clamp);
+    if (at != std::string::npos) src.replace(at, clamp.size(), screen_space);
+    return src;
+}
+
 // A small draw whose every float2 input lies in 0..1: sprites, HUD pieces, text. Upscaled, the far edge's last half
 // texel is drawn too and wrap blends in the opposite edge (thin lines on HUD sprites); clamp takes the edge texel.
 bool UnitTexcoords(const Assembled& a) {
@@ -1991,7 +2002,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t 
         vh = vit->second;
         vs = blobs_[vh].Get();
     } else {
-        std::string src = prog ? VertexProgramHlsl(s.vs->program, a.regs, a.decode) : FixedVertexHlsl(a.regs, a.pretransformed, a.decode, fk);
+        std::string src = prog ? VertexProgram(*s.vs, a.regs, a.decode) : FixedVertexHlsl(a.regs, a.pretransformed, a.decode, fk);
         vs = Compile(src, "main", "vs_5_0", vh);
         vs_src_[vkey] = vh;
     }
@@ -2243,7 +2254,7 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t 
             }
             fprintf(cap_, "     %s\n", name);
         };
-        dump("vs", vkey, prog ? VertexProgramHlsl(s.vs->program, a.regs, a.decode) : FixedVertexHlsl(a.regs, a.pretransformed, a.decode, fk));
+        dump("vs", vkey, prog ? VertexProgram(*s.vs, a.regs, a.decode) : FixedVertexHlsl(a.regs, a.pretransformed, a.decode, fk));
         dump("ps", pkh, PixelHlsl(pk));
     }
 
