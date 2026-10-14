@@ -19,10 +19,14 @@ struct Reverb {
         std::vector<float> s;
         uint32_t w = 0;
         // a delay of the whole line reads its oldest sample
-        float At(uint32_t delay) const { return s[(w + s.size() - delay % s.size()) % s.size()]; }
+        float At(uint32_t delay) const {
+            uint32_t size = uint32_t(s.size());
+            uint32_t back = delay < size ? delay : delay % size;
+            return s[w >= back ? w - back : w + size - back];
+        }
         void Put(float x) {
             s[w] = x;
-            w = (w + 1) % uint32_t(s.size());
+            if (++w == s.size()) w = 0;
         }
     };
     struct Params {
