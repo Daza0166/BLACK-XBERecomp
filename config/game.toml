@@ -500,7 +500,7 @@ call = "DrawListRoom"
 # src/game/fps_counter.cpp
 [[hook]]
 at = 0x20F8BF
-call = "DrawFps"
+call = "DrawOverlay"
 
 # src/game/mouse.cpp
 [[hook]]
