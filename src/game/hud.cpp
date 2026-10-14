@@ -21,6 +21,7 @@ constexpr uint32_t kAnchors = 0x2AD968;  // x, y share of the safe area per anch
 constexpr uint32_t kTaller = 0x2AD9BC;   // frame height the game gives the middle anchors on a widescreen
 constexpr uint32_t kStageX = 0x295DA4;   // where the game puts the 640 Flash stage on a widescreen, 106.67
 constexpr uint32_t kFromHud = 0x13C02F, kFromFlash = 0x121E82, kFromHost = 0xFFFFFFF0;  // return addresses
+constexpr uint32_t kTitleFade = 0xD71A0;  // draw callback of the level title card's full screen rectangle
 constexpr float kOff = -1, kCentre = 0.5f;
 
 float g_anchor = kOff, g_width = 640;
@@ -175,21 +176,19 @@ X86_FUNC(sub_000D3740) {
     __imp__sub_000D3740(ctx, base);
 }
 
-// List draw, ecx the list: a player's HUD holds its own at +0x40. Hidden, the HUD's list is not drawn (ret 4)
+// List draw, ecx the list: a player's HUD holds its own at +0x40
 X86_EXTERN_FUNC(__imp__sub_000DA4B0);
 X86_FUNC(sub_000DA4B0) {
     bool hud = R32(ctx.esp) == kFromHud;
-    if (hud && game::g_hide_hud) {
-        ctx.esp += 8;
-        return;
-    }
     g_hud = hud ? ctx.ecx - 0x40 : 0;
     __imp__sub_000DA4B0(ctx, base);
     g_hud = 0;
 }
 
-// A list's item before it draws, ebx: +0x40 its frame. HUD +0xA0 components: +4 frame, +8 next, +0x10 anchor id
-void HudItem(X86Context& ctx, uint8_t*) {
+// A list's item before it draws, ebx: +0x40 its frame, +0x44 its callback. HUD +0xA0 components: +4 frame, +8 next,
+// +0x10 anchor id. Hidden, the HUD draws only the title card's fade: false skips the callback
+bool HudItem(X86Context& ctx, uint8_t*) {
+    if (g_hud && game::g_hide_hud && R32(ctx.ebx + 0x44) != kTitleFade) return false;
     uint32_t frame = R32(ctx.ebx + 0x40);
     float anchor = kCentre;
     for (uint32_t c = g_hud ? R32(g_hud + 0xA0) : 0; c; c = R32(c + 8)) {
@@ -198,4 +197,5 @@ void HudItem(X86Context& ctx, uint8_t*) {
         if (float& height = G<float>(frame + 0xC); height == G<float>(kTaller)) height = 1;
     }
     if (g_anchor != kOff) g_anchor = anchor;
+    return true;
 }
