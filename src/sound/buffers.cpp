@@ -4,6 +4,12 @@
 using namespace kernel;
 using namespace sound;
 
+// DSBUFFERDESC: size, flags, bytes, format, mix bins
+constexpr uint32_t kBufferDescFlags = 4;
+constexpr uint32_t kBufferDescBytes = 8;
+constexpr uint32_t kBufferDescFormat = 12;
+constexpr uint32_t kBufferDescMixBins = 16;
+
 static uint32_t NewBuffer(uint32_t desc, uint32_t out) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     Start();
@@ -11,10 +17,11 @@ static uint32_t NewBuffer(uint32_t desc, uint32_t out) {
     std::memset(HostPtr(obj), 0, 0x40);
     Voice& v = g_voices[obj];
     v.obj = obj;
-    uint32_t flags = R32(desc + 4), bytes = R32(desc + 8);
-    ReadFormat(v, R32(desc + 12));
-    SetBins(v, R32(desc + 16));
-    v.is3d = flags & 0x10;
+    uint32_t flags = R32(desc + kBufferDescFlags);
+    uint32_t bytes = R32(desc + kBufferDescBytes);
+    ReadFormat(v, R32(desc + kBufferDescFormat));
+    SetBins(v, R32(desc + kBufferDescMixBins));
+    v.is3d = flags & kCaps3d;
     v.headroom = DefaultHeadroom(flags);
     if (bytes) {
         v.data = v.owned = mem::AllocContiguous(bytes, 0, 0xFFFFFFFF, 4);
@@ -32,9 +39,11 @@ HLE_STDCALL(IDirectSound_CreateSoundBuffer, 4) { return NewBuffer(a[1], a[2]); }
     HLE_STDCALL(IDirectSoundBuffer_##name, nargs) {         \
         std::lock_guard<std::recursive_mutex> lock(g_lock); \
         Voice* v = Find(a[0]);                              \
-        return v ? buf_##name(*v, a) : 0x80004005u;         \
+        return v ? buf_##name(*v, a) : kErrorFail;          \
     }                                                       \
     static uint32_t buf_##name([[maybe_unused]] Voice& v, [[maybe_unused]] const Args& a)
+
+constexpr uint32_t kInvalidCall = 0x88780032u;  // DSERR_INVALIDCALL
 
 BUFFER(Release, 1) {
     if (--v.refs > 0) return uint32_t(v.refs);
@@ -77,7 +86,7 @@ BUFFER(StopEx, 4) {
 }
 // (this, start, length) in bytes, 0 length plays to the end. The loop becomes the whole region.
 BUFFER(SetPlayRegion, 3) {
-    if (a[1] > v.bytes || a[2] > v.bytes - a[1]) return 0x88780032u;
+    if (a[1] > v.bytes || a[2] > v.bytes - a[1]) return kInvalidCall;
     v.play_start = a[1];
     v.play_len = v.loop_len = a[2] ? a[2] : v.bytes - a[1];
     v.loop_start = 0;
@@ -86,13 +95,18 @@ BUFFER(SetPlayRegion, 3) {
     return 0;
 }
 BUFFER(SetLoopRegion, 3) {
-    if (a[1] > v.play_len || a[2] > v.play_len - a[1]) return 0x88780032u;
+    if (a[1] > v.play_len || a[2] > v.play_len - a[1]) return kInvalidCall;
     v.loop_start = a[1];
     v.loop_len = a[2] ? a[2] : v.play_len - a[1];
     return 0;
 }
 BUFFER(GetStatus, 2) {
-    W32(a[1], (v.playing ? 1u : 0u) | (v.playing && v.looping ? 4u : 0u));
+    constexpr uint32_t kStatusPlaying = 1;  // DSBSTATUS_PLAYING
+    constexpr uint32_t kStatusLooping = 4;  // DSBSTATUS_LOOPING
+    uint32_t status = 0;
+    if (v.playing) status |= kStatusPlaying;
+    if (v.playing && v.looping) status |= kStatusLooping;
+    W32(a[1], status);
     return 0;
 }
 BUFFER(GetCurrentPosition, 3) {
@@ -106,9 +120,10 @@ BUFFER(SetCurrentPosition, 2) {
     return 0;
 }
 BUFFER(Lock, 8) {
-    uint32_t off = a[1], n = a[2];
+    uint32_t off = a[1];
+    uint32_t n = a[2];
     if (a[7] & 1) n = v.bytes;  // DSBLOCK_ENTIREBUFFER
-    if (!v.bytes) return 0x80004005u;
+    if (!v.bytes) return kErrorFail;
     off %= v.bytes;
     uint32_t first = std::min(n, v.bytes - off);
     W32(a[3], v.data + off);
@@ -152,12 +167,18 @@ BUFFER(SetPosition, 5) {
 }
 BUFFER(SetVelocity, 5) { return 0; }
 BUFFER(SetI3DL2Source, 3) { return 0; }
-// (this, DS3DBUFFER, apply): position at +4, distances at +0x34 and +0x38, mode at +0x3C
+// DS3DBUFFER
+constexpr uint32_t k3dBufferPosition = 4;
+constexpr uint32_t k3dBufferMinDistance = 0x34;
+constexpr uint32_t k3dBufferMaxDistance = 0x38;
+constexpr uint32_t k3dBufferMode = 0x3C;
+
+// (this, DS3DBUFFER, apply)
 BUFFER(SetAllParameters, 3) {
-    for (int i = 0; i < 3; i++) v.p[i] = F32(R32(a[1] + 4 + i * 4));
-    v.min_dist = F32(R32(a[1] + 0x34));
-    v.max_dist = F32(R32(a[1] + 0x38));
-    v.mode = R32(a[1] + 0x3C);
+    for (int i = 0; i < 3; i++) v.p[i] = F32(R32(a[1] + k3dBufferPosition + i * 4));
+    v.min_dist = F32(R32(a[1] + k3dBufferMinDistance));
+    v.max_dist = F32(R32(a[1] + k3dBufferMaxDistance));
+    v.mode = R32(a[1] + k3dBufferMode);
     return 0;
 }
 // (this, points, count, apply)

@@ -13,52 +13,69 @@ namespace dispatch {
 X86Func* Find(uint32_t guest);
 }
 
-// DSOUND objects are the host's; .XTLID names linked exports that would still run console code on them
-static void AuditExports() {
+// exports with a host version
+static bool Handled(uint32_t va) {
     static const uint32_t handled[] = {
         SYM(DirectSoundCreate), SYM(IDirectSound_Release), SYM(DirectSoundUseFullHRTF), SYM(DirectSoundUseLightHRTF),
-        SYM(IDirectSound_GetSpeakerConfig),
-        SYM(IDirectSound_SetEffectData), SYM(IDirectSound_EnableHeadphones), SYM(IDirectSound_SetMixBinHeadroom),
-        SYM(IDirectSound_CommitDeferredSettings), SYM(IDirectSound_SetDopplerFactor), SYM(IDirectSound_SetRolloffFactor),
-        SYM(IDirectSound_SetDistanceFactor), SYM(IDirectSound_SetVelocity), SYM(IDirectSound_SetI3DL2Listener),
-        SYM(IDirectSound_SetPosition), SYM(IDirectSound_SetOrientation), SYM(IDirectSound_SynchPlayback), SYM(DirectSoundDoWork),
+        SYM(IDirectSound_GetSpeakerConfig), SYM(IDirectSound_SetEffectData), SYM(IDirectSound_EnableHeadphones),
+        SYM(IDirectSound_SetMixBinHeadroom), SYM(IDirectSound_CommitDeferredSettings),
+        SYM(IDirectSound_SetDopplerFactor), SYM(IDirectSound_SetRolloffFactor), SYM(IDirectSound_SetDistanceFactor),
+        SYM(IDirectSound_SetVelocity), SYM(IDirectSound_SetI3DL2Listener), SYM(IDirectSound_SetPosition),
+        SYM(IDirectSound_SetOrientation), SYM(IDirectSound_SynchPlayback), SYM(DirectSoundDoWork),
         SYM(IDirectSound_DownloadEffectsImage), SYM(IDirectSound_GetEffectData), SYM(IDirectSound_CommitEffectData),
-        SYM(IDirectSound_GetOutputLevels), SYM(IDirectSoundBuffer_SetPlayRegion), SYM(IDirectSoundBuffer_SetAllParameters),
-        SYM(IDirectSoundBuffer_SetFormat), SYM(IDirectSoundBuffer_SetOutputBuffer), SYM(IDirectSoundBuffer_SetRolloffCurve),
-        SYM(IDirectSoundBuffer_StopEx),
-        SYM(XAudioDownloadEffectsImage), SYM(DirectSoundCreateBuffer), SYM(IDirectSound_CreateSoundBuffer),
-        SYM(IDirectSoundBuffer_Release), SYM(IDirectSoundBuffer_Unlock), SYM(IDirectSoundBuffer_SetBufferData),
-        SYM(IDirectSoundBuffer_Play), SYM(IDirectSoundBuffer_Stop), SYM(IDirectSoundBuffer_SetLoopRegion),
-        SYM(IDirectSoundBuffer_GetStatus), SYM(IDirectSoundBuffer_GetCurrentPosition), SYM(IDirectSoundBuffer_SetCurrentPosition),
+        SYM(IDirectSound_GetOutputLevels), SYM(IDirectSoundBuffer_SetPlayRegion),
+        SYM(IDirectSoundBuffer_SetAllParameters), SYM(IDirectSoundBuffer_SetFormat),
+        SYM(IDirectSoundBuffer_SetOutputBuffer), SYM(IDirectSoundBuffer_SetRolloffCurve),
+        SYM(IDirectSoundBuffer_StopEx), SYM(XAudioDownloadEffectsImage), SYM(DirectSoundCreateBuffer),
+        SYM(IDirectSound_CreateSoundBuffer), SYM(IDirectSoundBuffer_Release), SYM(IDirectSoundBuffer_Unlock),
+        SYM(IDirectSoundBuffer_SetBufferData), SYM(IDirectSoundBuffer_Play), SYM(IDirectSoundBuffer_Stop),
+        SYM(IDirectSoundBuffer_SetLoopRegion), SYM(IDirectSoundBuffer_GetStatus),
+        SYM(IDirectSoundBuffer_GetCurrentPosition), SYM(IDirectSoundBuffer_SetCurrentPosition),
         SYM(IDirectSoundBuffer_Lock), SYM(IDirectSoundBuffer_SetVolume), SYM(IDirectSoundBuffer_SetFrequency),
-        SYM(IDirectSoundBuffer_SetFilter), SYM(IDirectSoundBuffer_SetHeadroom), SYM(IDirectSoundBuffer_SetMixBinVolumes),
-        SYM(IDirectSoundBuffer_SetMixBins), SYM(IDirectSoundBuffer_SetMaxDistance), SYM(IDirectSoundBuffer_SetMinDistance),
-        SYM(IDirectSoundBuffer_SetPosition), SYM(IDirectSoundBuffer_SetVelocity), SYM(IDirectSoundBuffer_SetI3DL2Source),
-        SYM(DirectSoundCreateStream), SYM(CDirectSoundStream_AddRef), SYM(CDirectSoundStream_SetFormat),
-        SYM(CDirectSoundStream_Release), SYM(CDirectSoundStream_GetInfo), SYM(CDirectSoundStream_GetStatus),
-        SYM(CDirectSoundStream_Process), SYM(CDirectSoundStream_Discontinuity), SYM(CDirectSoundStream_Flush),
-        SYM(CDirectSoundStream_FlushEx), SYM(CDirectSoundStream_Pause), SYM(CDirectSoundStream_SetVolume),
-        SYM(CDirectSoundStream_SetFrequency), SYM(CDirectSoundStream_SetFilter), SYM(CDirectSoundStream_SetHeadroom),
-        SYM(CDirectSoundStream_SetMixBinVolumes), SYM(CDirectSoundStream_SetMixBins), SYM(CDirectSoundStream_SetMaxDistance),
-        SYM(CDirectSoundStream_SetMinDistance), SYM(CDirectSoundStream_SetPosition), SYM(CDirectSoundStream_SetVelocity),
-        SYM(CDirectSoundStream_SetI3DL2Source)};
+        SYM(IDirectSoundBuffer_SetFilter), SYM(IDirectSoundBuffer_SetHeadroom),
+        SYM(IDirectSoundBuffer_SetMixBinVolumes), SYM(IDirectSoundBuffer_SetMixBins),
+        SYM(IDirectSoundBuffer_SetMaxDistance), SYM(IDirectSoundBuffer_SetMinDistance),
+        SYM(IDirectSoundBuffer_SetPosition), SYM(IDirectSoundBuffer_SetVelocity),
+        SYM(IDirectSoundBuffer_SetI3DL2Source), SYM(DirectSoundCreateStream), SYM(CDirectSoundStream_AddRef),
+        SYM(CDirectSoundStream_SetFormat), SYM(CDirectSoundStream_Release), SYM(CDirectSoundStream_GetInfo),
+        SYM(CDirectSoundStream_GetStatus), SYM(CDirectSoundStream_Process), SYM(CDirectSoundStream_Discontinuity),
+        SYM(CDirectSoundStream_Flush), SYM(CDirectSoundStream_FlushEx), SYM(CDirectSoundStream_Pause),
+        SYM(CDirectSoundStream_SetVolume), SYM(CDirectSoundStream_SetFrequency), SYM(CDirectSoundStream_SetFilter),
+        SYM(CDirectSoundStream_SetHeadroom), SYM(CDirectSoundStream_SetMixBinVolumes),
+        SYM(CDirectSoundStream_SetMixBins), SYM(CDirectSoundStream_SetMaxDistance),
+        SYM(CDirectSoundStream_SetMinDistance), SYM(CDirectSoundStream_SetPosition),
+        SYM(CDirectSoundStream_SetVelocity), SYM(CDirectSoundStream_SetI3DL2Source)};
+    return std::find(std::begin(handled), std::end(handled), va) != std::end(handled);
+}
+
+constexpr uint32_t kDsoundLibraryId = 0xB;  // DSOUND's library id, the high word of an .XTLID id
+constexpr uint8_t kJmpRel32 = 0xE9;
+
+// DSOUND objects are the host's; .XTLID names linked exports that would still run console code on them
+static void AuditExports() {
     std::string left;
     // the library's own section: the WMA decoder shares the export ids and touches no DSOUND object
-    uint32_t lo = 0, hi = 0;
-    for (auto& s : g_image->sections)
-        if (SYM(DirectSoundCreate) - s.va < s.vsize) lo = s.va, hi = s.va + s.vsize;
-    for (auto& s : g_image->sections)
-        for (uint32_t o = 0; s.name == ".XTLID" && o + 8 <= std::min(s.vsize, s.rsize); o += 8) {
-            uint32_t id = g_image->U32(s.raw + o), va = g_image->U32(s.raw + o + 4);
-            auto done = [&](uint32_t f) { return std::find(std::begin(handled), std::end(handled), f) != std::end(handled); };
+    uint32_t lo = 0;
+    uint32_t hi = 0;
+    for (auto& s : g_image->sections) {
+        if (SYM(DirectSoundCreate) - s.va >= s.vsize) continue;
+        lo = s.va;
+        hi = s.va + s.vsize;
+    }
+    for (auto& s : g_image->sections) {
+        if (s.name != ".XTLID") continue;
+        for (uint32_t o = 0; o + 8 <= std::min(s.vsize, s.rsize); o += 8) {
+            uint32_t id = g_image->U32(s.raw + o);
+            uint32_t va = g_image->U32(s.raw + o + 4);
+            if (id >> 16 != kDsoundLibraryId || va < lo || va >= hi) continue;
+            if (!dispatch::Find(va) || Handled(va)) continue;
             // a jmp to a host version is covered by it
-            if (id >> 16 != 0xB || va < lo || va >= hi || !dispatch::Find(va) || done(va) ||
-                (G<uint8_t>(va) == 0xE9 && done(va + 5 + R32(va + 1))))
-                continue;
+            if (G<uint8_t>(va) == kJmpRel32 && Handled(va + 5 + R32(va + 1))) continue;
             char b[24];
             std::snprintf(b, sizeof b, " %05X at %08X", id, va);
             left += b;
         }
+    }
     if (!left.empty()) LOGW("dsound: exports running their original code:%s", left.c_str());
 }
 
@@ -110,7 +127,8 @@ HLE_STDCALL(IDirectSound_SetI3DL2Listener, 3) {
     float p[12];
     for (int i = 0; i < 12; i++) {
         uint32_t v = R32(a[1] + i * 4);
-        p[i] = i < 2 || i == 5 || i == 7 ? float(int32_t(v)) : F32(v);
+        bool integer = i < 2 || i == 5 || i == 7;
+        p[i] = integer ? float(int32_t(v)) : F32(v);
     }
     LOG_FIRST(32, "dsound: listener room %.0f reflections %.0f after %.3f s, reverb %.0f after %.3f s, decay %.2f s",
               p[0], p[5], p[6], p[7], p[8], p[3]);
@@ -153,11 +171,16 @@ HLE_STDCALL(IDirectSound_SynchPlayback, 1) {
 // the descriptor keeps the image's effect list so the title finds its indices, every segment points at zeroed memory
 static uint32_t EffectsDesc(const std::vector<uint8_t>& img, const char* name) {
     XDK_REQUIRE("dsound", XDK_KEY(EffectsImage_Skip0), XDK_KEY(EffectsImage_Skip1), XDK_KEY(EffectsImage_Desc));
-    auto u32 = [&](size_t o) { uint32_t v = 0; if (o + 4 <= img.size()) std::memcpy(&v, &img[o], 4); return v; };
+    auto u32 = [&](size_t o) {
+        uint32_t v = 0;
+        if (o + 4 <= img.size()) std::memcpy(&v, &img[o], 4);
+        return v;
+    };
     size_t t = XDK_EffectsImage_Desc + size_t(u32(XDK_EffectsImage_Skip0) + u32(XDK_EffectsImage_Skip1)) * 4;
     uint32_t count = std::min<uint32_t>(u32(t), 64);
     LOGI("dsound: effects image %s, %u effects", name, count);
     uint32_t desc = mem::AllocSystem(8 + std::max(count, 1u) * 32);
+    // count, effect list, then per effect 4 segments of (address, size)
     W32(desc, count);
     W32(desc + 4, u32(t + 4));
     for (uint32_t i = 0; i < count; i++) {
@@ -178,8 +201,11 @@ HLE_STDCALL(XAudioDownloadEffectsImage, 4) {
     std::string name = ReadCString(a[0]);
     std::vector<uint8_t> img;
     if (a[2] & 1) {
-        for (auto& sec : g_image->sections)
-            if (sec.name == name) img.assign(static_cast<uint8_t*>(HostPtr(sec.va)), static_cast<uint8_t*>(HostPtr(sec.va)) + sec.vsize);
+        for (auto& sec : g_image->sections) {
+            if (sec.name != name) continue;
+            const uint8_t* at = static_cast<uint8_t*>(HostPtr(sec.va));
+            img.assign(at, at + sec.vsize);
+        }
     } else {
         ReadGameFile(name, img);
     }
@@ -190,7 +216,8 @@ HLE_STDCALL(XAudioDownloadEffectsImage, 4) {
 
 // (this, image, size, location, descriptor out): the title loaded the image itself
 HLE_STDCALL(IDirectSound_DownloadEffectsImage, 5) {
-    std::vector<uint8_t> img(static_cast<uint8_t*>(HostPtr(a[1])), static_cast<uint8_t*>(HostPtr(a[1])) + a[2]);
+    const uint8_t* at = static_cast<uint8_t*>(HostPtr(a[1]));
+    std::vector<uint8_t> img(at, at + a[2]);
     uint32_t desc = EffectsDesc(img, "from memory");
     if (a[4]) W32(a[4], desc);
     return 0;

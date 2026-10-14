@@ -17,8 +17,20 @@
 namespace sound {
 using namespace kernel;
 
+// WAVEFORMATEX tags the mixer reads
+constexpr uint16_t kFormatPcm = 1;
+constexpr uint16_t kFormatXboxAdpcm = 0x69;
+// an Xbox ADPCM block holds 64 played frames in 36 bytes per channel
+constexpr uint32_t kAdpcmFrames = 64;
+constexpr uint32_t kAdpcmBlockBytes = 36;
+
+// XMEDIAPACKET as the title queued it
 struct Packet {
-    uint32_t data, size, completed_ptr, status_ptr, context;
+    uint32_t data;
+    uint32_t size;
+    uint32_t completed_ptr;
+    uint32_t status_ptr;
+    uint32_t context;
     uint32_t used = 0;
 };
 
@@ -41,28 +53,46 @@ struct Voice {
     bool stream = false;
     int refs = 1;
     // format
-    uint16_t tag = 1, channels = 1, bits = 16, align = 2;
+    uint16_t tag = kFormatPcm;
+    uint16_t channels = 1;
+    uint16_t bits = 16;
+    uint16_t align = 2;
     uint32_t rate = 48000;
     // buffer
     // play region in bytes from data, loop region in bytes from the play region
-    uint32_t data = 0, bytes = 0, loop_start = 0, loop_len = 0, play_start = 0, play_len = 0;
+    uint32_t data = 0;
+    uint32_t bytes = 0;
+    uint32_t loop_start = 0;
+    uint32_t loop_len = 0;
+    uint32_t play_start = 0;
+    uint32_t play_len = 0;
     uint32_t owned = 0;  // the buffer's own memory, made with it: freed by SetBufferData and Release
-    bool playing = false, looping = false, paused = false;
-    bool active = false, ending = false;  // stream: took a packet since it went quiet, quiet again once they run out
+    bool playing = false;
+    bool looping = false;
+    bool paused = false;
+    // stream: took a packet since it went quiet, quiet again once they run out
+    bool active = false;
+    bool ending = false;
     bool sync = false;  // held until IDirectSound_SynchPlayback
     double pos = 0;  // frames
     uint32_t freq = 0;
     // stream
-    uint32_t max_packets = 1, callback = 0, context = 0;
+    uint32_t max_packets = 1;
+    uint32_t callback = 0;
+    uint32_t context = 0;
     std::deque<Packet> packets;
     // levels
-    float volume = 1, headroom = 1;
-    uint8_t nbins = 0, bin[8] = {};
+    float volume = 1;
+    float headroom = 1;
+    uint8_t nbins = 0;
+    uint8_t bin[8] = {};
     int32_t bin_mb[32] = {};  // by mix bin
     std::vector<float> curve;  // rolloff
     bool is3d = false;
     uint32_t mode = 0;  // DS3DMODE: 1 head relative, 2 disabled
-    float p[3] = {}, min_dist = 1, max_dist = 1e9f;
+    float p[3] = {};
+    float min_dist = 1;
+    float max_dist = 1e9f;
     Gains gain;  // the last block's levels, the next block ramps from them
     bool has_gain = false;
     // a mono 3D voice's interaural delay in samples and its recent samples
@@ -87,12 +117,18 @@ struct Place {
 };
 
 struct Done {
-    uint32_t voice, callback, context, packet_context, status;
+    uint32_t voice;
+    uint32_t callback;
+    uint32_t context;
+    uint32_t packet_context;
+    uint32_t status;
 };
 
 inline std::recursive_mutex g_lock;
 inline std::map<uint32_t, Voice> g_voices;
-inline float g_listener[3] = {}, g_front[3] = {0, 0, 1}, g_top[3] = {0, 1, 0};
+inline float g_listener[3] = {};
+inline float g_front[3] = {0, 0, 1};
+inline float g_top[3] = {0, 1, 0};
 // Completed packets' callbacks, run as the XDK runs them: in DirectSoundDoWork on the title's thread, so they never
 // overlap the title's own stream code. A stream flushed or released runs its own at once, before it is gone.
 inline std::deque<Done> g_done;
@@ -110,13 +146,16 @@ inline uint8_t g_bin_headroom[32] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 inline float Db(int32_t hundredths) { return hundredths <= -10000 ? 0.0f : std::pow(10.0f, hundredths / 2000.0f); }
 
 inline uint32_t FramesOf(const Voice& v, uint32_t bytes) {
-    if (v.tag == 0x69) return bytes / (36u * v.channels) * 64;
+    if (v.tag == kFormatXboxAdpcm) return bytes / (kAdpcmBlockBytes * v.channels) * kAdpcmFrames;
     return bytes / std::max<uint32_t>(v.align, 1);
 }
 inline uint32_t BytesOf(const Voice& v, uint32_t frames) {
-    if (v.tag == 0x69) return frames / 64 * 36 * v.channels;
+    if (v.tag == kFormatXboxAdpcm) return frames / kAdpcmFrames * kAdpcmBlockBytes * v.channels;
     return frames * v.align;
 }
+
+constexpr uint32_t kCaps3d = 0x10;  // DSBCAPS_CTRL3D
+constexpr uint32_t kErrorFail = 0x80004005u;  // E_FAIL
 
 // a stream goes quiet: a started one loses its pause
 inline void Deactivate(Voice& v) {

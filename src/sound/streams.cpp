@@ -7,8 +7,17 @@ using namespace sound;
 
 constexpr uint32_t kStreamVtable = SYM(DSound_StreamVtable);  // CDirectSoundStream XMediaObject vtable
 constexpr uint32_t kStreamVtable2 = SYM(DSound_StreamVtable2);
-constexpr uint32_t kPacketPending = 0x8000000A, kFlushed = 0x80004004;
+constexpr uint32_t kPacketPending = 0x8000000A;  // E_PENDING
+constexpr uint32_t kFlushed = 0x80004004;        // E_ABORT
 static thread_local std::vector<Done> t_flushed;  // run by the STREAM call that flushed them, once g_lock is let go
+
+// DSSTREAMDESC
+constexpr uint32_t kStreamDescFlags = 0;
+constexpr uint32_t kStreamDescMaxPackets = 4;
+constexpr uint32_t kStreamDescFormat = 8;
+constexpr uint32_t kStreamDescCallback = 12;
+constexpr uint32_t kStreamDescContext = 16;
+constexpr uint32_t kStreamDescMixBins = 20;
 
 HLE_STDCALL(DirectSoundCreateStream, 2) {
     XDK_REQUIRE("dsound", XDK_KEY(CDirectSoundStream_Vtable), XDK_KEY(CDirectSoundStream_Vtable2),
@@ -23,13 +32,13 @@ HLE_STDCALL(DirectSoundCreateStream, 2) {
     Voice& v = g_voices[obj];
     v.obj = obj;
     v.stream = true;
-    uint32_t flags = R32(desc);
-    v.max_packets = std::max<uint32_t>(R32(desc + 4), 1);
-    ReadFormat(v, R32(desc + 8));
-    v.callback = R32(desc + 12);
-    v.context = R32(desc + 16);
-    SetBins(v, R32(desc + 20));
-    v.is3d = flags & 0x10;
+    uint32_t flags = R32(desc + kStreamDescFlags);
+    v.max_packets = std::max<uint32_t>(R32(desc + kStreamDescMaxPackets), 1);
+    ReadFormat(v, R32(desc + kStreamDescFormat));
+    v.callback = R32(desc + kStreamDescCallback);
+    v.context = R32(desc + kStreamDescContext);
+    SetBins(v, R32(desc + kStreamDescMixBins));
+    v.is3d = flags & kCaps3d;
     v.headroom = DefaultHeadroom(flags);
     W32(a[1], obj);
     return 0;
@@ -43,7 +52,7 @@ HLE_STDCALL(DirectSoundCreateStream, 2) {
         {                                                       \
             std::lock_guard<std::recursive_mutex> lock(g_lock); \
             Voice* v = Find(a[0]);                              \
-            r = v ? str_##name(*v, a) : 0x80004005u;            \
+            r = v ? str_##name(*v, a) : kErrorFail;             \
             flushed.swap(t_flushed);                            \
         }                                                       \
         Run(ctx, flushed);                                      \
@@ -85,18 +94,19 @@ STREAM(Release, 1) {
 STREAM(GetInfo, 2) {
     uint32_t info = a[1];
     W32(info, 0x3);  // fixed sample size, fixed packet alignment
-    W32(info + 4, v.tag == 0x69 ? 36u * v.channels : v.align);
+    W32(info + 4, v.tag == kFormatXboxAdpcm ? kAdpcmBlockBytes * v.channels : v.align);
     W32(info + 8, 0);
     W32(info + 12, 0);
     return 0;
 }
 STREAM(GetStatus, 2) {
-    W32(a[1], v.packets.size() < v.max_packets ? 1u : 0u);
+    W32(a[1], v.packets.size() < v.max_packets ? 1u : 0u);  // XMEDIASTATUS_ACCEPT_INPUT
     return 0;
 }
 STREAM(Process, 3) {
     uint32_t in = a[1];
     if (!in) return 0;
+    // XMEDIAPACKET: data, size, completed size, status, context
     Packet pk{R32(in), R32(in + 4), R32(in + 8), R32(in + 12), R32(in + 16)};
     if (pk.completed_ptr) W32(pk.completed_ptr, 0);
     if (pk.status_ptr) W32(pk.status_ptr, kPacketPending);

@@ -6,23 +6,30 @@
 namespace sound {
 
 const int kIndex[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
-const int kStep[89] = {7,     8,     9,     10,    11,    12,    13,    14,    16,    17,    19,    21,    23,    25,    28,
-                       31,    34,    37,    41,    45,    50,    55,    60,    66,    73,    80,    88,    97,    107,   118,
-                       130,   143,   157,   173,   190,   209,   230,   253,   279,   307,   337,   371,   408,   449,   494,
-                       544,   598,   658,   724,   796,   876,   963,   1060,  1166,  1282,  1411,  1552,  1707,  1878,  2066,
-                       2272,  2499,  2749,  3024,  3327,  3660,  4026,  4428,  4871,  5358,  5894,  6484,  7132,  7845,  8630,
-                       9493,  10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767};
+const int kStep[89] = {
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21,
+    23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
+    73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209,
+    230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658,
+    724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
+    2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484,
+    7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350,
+    22385, 24623, 27086, 29794, 32767};
 
 // one 36 byte per channel IMA block, the voice plays 64 of its 65 frames
 void DecodeBlock(const uint8_t* b, int ch, int16_t* out) {
     for (int c = 0; c < ch; c++) {
-        int pred = int16_t(b[c * 4] | b[c * 4 + 1] << 8), idx = std::min<int>(b[c * 4 + 2], 88);
+        // header per channel: 16 bit first sample, step index
+        int pred = int16_t(b[c * 4] | b[c * 4 + 1] << 8);
+        int idx = std::min<int>(b[c * 4 + 2], 88);
         out[c] = int16_t(pred);
         const uint8_t* d = b + ch * 4;
-        for (int k = 0; k < 8; k++)
+        for (int k = 0; k < 8; k++) {
+            // 4 bytes of 8 nibbles per channel, channels interleaved
             for (int j = 0; j < 8; j++) {
                 int n = (d[(k * ch + c) * 4 + j / 2] >> ((j & 1) * 4)) & 15;
-                int step = kStep[idx], diff = step >> 3;
+                int step = kStep[idx];
+                int diff = step >> 3;
                 if (n & 1) diff += step >> 2;
                 if (n & 2) diff += step >> 1;
                 if (n & 4) diff += step;
@@ -30,6 +37,7 @@ void DecodeBlock(const uint8_t* b, int ch, int16_t* out) {
                 idx = std::clamp(idx + kIndex[n], 0, 88);
                 out[(1 + k * 8 + j) * ch + c] = int16_t(pred);
             }
+        }
     }
 }
 
@@ -52,9 +60,9 @@ const int16_t* DecodedBlock(Voice& v, int64_t at) {
 float Sample(Voice& v, uint32_t data, uint32_t f, int c) {
     c = std::min<int>(c, v.channels - 1);
     const uint8_t* p = static_cast<const uint8_t*>(HostPtr(data));
-    if (v.tag == 0x69) {
-        int64_t at = int64_t(data) + int64_t(f / 64) * 36 * v.channels;
-        return DecodedBlock(v, at)[(f % 64) * v.channels + c] / 32768.0f;
+    if (v.tag == kFormatXboxAdpcm) {
+        int64_t at = int64_t(data) + int64_t(f / kAdpcmFrames) * kAdpcmBlockBytes * v.channels;
+        return DecodedBlock(v, at)[(f % kAdpcmFrames) * v.channels + c] / 32768.0f;
     }
     if (v.bits == 8) return (p[f * v.align + c] - 128) / 128.0f;
     int16_t s;
@@ -138,7 +146,9 @@ Place Locate(const Voice& v) {
     float right[3] = {g_top[1] * g_front[2] - g_top[2] * g_front[1], g_top[2] * g_front[0] - g_top[0] * g_front[2],
                       g_top[0] * g_front[1] - g_top[1] * g_front[0]};
     float level[3] = {d[0], 0, d[2]};  // the library turns the sound on the horizontal plane only
-    at.azimuth = Azimuth(level, rel ? kHeadFront : g_front, rel ? kHeadRight : right);
+    const float* front = rel ? kHeadFront : g_front;
+    const float* side = rel ? kHeadRight : right;
+    at.azimuth = Azimuth(level, front, side);
     // surround without headphones splits the crosstalk pairs (0x4CF3F7 in Double Agent)
     if (audio::IsSurround() && !g_headphones) {
         float back = BackShare(at.azimuth, dist);
@@ -352,7 +362,10 @@ bool BufferFrame(Voice& v, const Region& region, float s[2]) {
     }
     if (!v.data) return false;
     uint32_t base = v.data + v.play_start;
-    uint32_t next = f + 1 < end ? f + 1 : v.looping ? start : f;
+    // the frame after the last is the loop start, or the last again
+    uint32_t next = f;
+    if (f + 1 < end) next = f + 1;
+    else if (v.looping) next = start;
     float t = float(v.pos - f);
     int channels = std::min<int>(v.channels, 2);
     for (int c = 0; c < channels; c++) {
@@ -439,32 +452,49 @@ void Start() {
     });
 }
 
+// WAVEFORMATEX
+constexpr uint32_t kWfxChannels = 2;
+constexpr uint32_t kWfxRate = 4;
+constexpr uint32_t kWfxBlockAlign = 12;
+constexpr uint32_t kWfxBits = 14;
+
 void ReadFormat(Voice& v, uint32_t wfx) {
     if (!wfx) return;
     v.tag = R16(wfx);
-    v.channels = std::max<uint16_t>(R16(wfx + 2), 1);
-    v.rate = R32(wfx + 4);
-    v.align = std::max<uint16_t>(R16(wfx + 12), 1);
-    v.bits = R16(wfx + 14);
-    if (v.tag != 1 && v.tag != 0x69) LOG_FIRST(8, "dsound: format tag %X not supported", v.tag);
+    v.channels = std::max<uint16_t>(R16(wfx + kWfxChannels), 1);
+    v.rate = R32(wfx + kWfxRate);
+    v.align = std::max<uint16_t>(R16(wfx + kWfxBlockAlign), 1);
+    v.bits = R16(wfx + kWfxBits);
+    if (v.tag != kFormatPcm && v.tag != kFormatXboxAdpcm) LOG_FIRST(8, "dsound: format tag %X not supported", v.tag);
 }
+
+// DSMIXBINS: count, then a pointer to (bin, volume) pairs of 8 bytes
+constexpr uint32_t kMixBinsPairs = 4;
+constexpr uint32_t kMixBinPairSize = 8;
+constexpr uint32_t kMixBinPairVolume = 4;
 
 // DSMIXBINS: the voice's bins and their volumes
 void SetBins(Voice& v, uint32_t mixbins) {
     v.nbins = 0;  // none listed: front left and right
     if (!mixbins) return;
-    uint32_t n = std::min<uint32_t>(R32(mixbins), 8), pairs = R32(mixbins + 4);
+    uint32_t n = std::min<uint32_t>(R32(mixbins), 8);
+    uint32_t pairs = R32(mixbins + kMixBinsPairs);
     for (uint32_t i = 0; i < n; i++) {
-        v.bin[i] = R32(pairs + i * 8) & 31;
-        v.bin_mb[v.bin[i]] = int32_t(R32(pairs + i * 8 + 4));
+        uint32_t pair = pairs + i * kMixBinPairSize;
+        v.bin[i] = R32(pair) & 31;
+        v.bin_mb[v.bin[i]] = int32_t(R32(pair + kMixBinPairVolume));
     }
     v.nbins = uint8_t(n);
 }
 // volumes only, the bins stay
 void SetBinVolumes(Voice& v, uint32_t mixbins) {
     if (!mixbins) return;
-    uint32_t n = std::min<uint32_t>(R32(mixbins), 32), pairs = R32(mixbins + 4);
-    for (uint32_t i = 0; i < n; i++) v.bin_mb[R32(pairs + i * 8) & 31] = int32_t(R32(pairs + i * 8 + 4));
+    uint32_t n = std::min<uint32_t>(R32(mixbins), 32);
+    uint32_t pairs = R32(mixbins + kMixBinsPairs);
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t pair = pairs + i * kMixBinPairSize;
+        v.bin_mb[R32(pair) & 31] = int32_t(R32(pair + kMixBinPairVolume));
+    }
 }
 // 600 mB unless 3D or a mix in or effect in buffer
 float DefaultHeadroom(uint32_t flags) { return flags & 0x382010 ? 1.0f : Db(-600); }
