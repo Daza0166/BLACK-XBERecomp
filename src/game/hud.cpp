@@ -1,6 +1,7 @@
 // 2D is drawn 640x480 and shown as wide as the output. The game narrows its Flash menus itself; what its own 2D
 // layer draws gets x' = x * narrow + anchor * spare width: HUD parts by their component's anchor, the rest 4:3 in
 // the middle.
+#include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <vector>
@@ -117,33 +118,59 @@ struct SavedUv {
 
 // textured quads and solid quads, two corners each
 X86_EXTERN_FUNC(__imp__sub_000D6C00);
-static bool g_film = false;
-// The film quad covers the frame. Filled, it is made taller about the middle so a 4:3 film fills the screen, top and
-// bottom cut; else narrowed to 4:3 in the middle
+
+namespace {
+
+// film table 0x29D9C0, 12 bytes an entry, +8 the film runs behind a menu; index at game +0x2042C
+constexpr uint32_t kGame = 0x2D45F0;
+constexpr uint32_t kCurrentFilm = 0x2042C;
+constexpr uint32_t kFilmTable = 0x29D9C0;
+constexpr uint32_t kFilmEntry = 12;
+constexpr uint32_t kFilmBehindMenu = 8;
+constexpr uint32_t kFilms = 27;
+
+enum class Film { None, Shown, Menu };
+Film g_film = Film::None;
+
+Film CurrentFilm() {
+    uint32_t game = R32(kGame);
+    uint32_t film = game ? R32(game + kCurrentFilm) : kFilms;
+    bool menu = film < kFilms && G<uint8_t>(kFilmTable + film * kFilmEntry + kFilmBehindMenu);
+    return menu ? Film::Menu : Film::Shown;
+}
+
+// corners are x, y pairs: x (axis 0) or y (axis 1) scaled about the middle
+void ScaleQuad(float* q, int axis, float scale) {
+    float middle = (q[axis] + q[axis + 2]) / 2;
+    q[axis] = middle + (q[axis] - middle) * scale;
+    q[axis + 2] = middle + (q[axis + 2] - middle) * scale;
+}
+
+}  // namespace
+
+// The film quad covers the frame, shown as wide as the output. A menu's film stays stretched, no wider than 16:9.
+// Filled, a film is made taller about the middle so it fills the screen, top and bottom cut; else narrowed to 4:3
 X86_FUNC(sub_000D6C00) {
     uint32_t quads = R32(ctx.esp + 8);
-    if (!g_film && g_inset > 0) {
+    if (g_film == Film::None && g_inset > 0) {
         SavedUv uv(ctx, quads * 2);
         InsetQuads(&G<float>(ctx.eax), uv.uv, quads);
         return Emit(ctx, base, quads * 2, __imp__sub_000D6C00);
     }
-    if (!g_film || !game::Wide()) return Emit(ctx, base, quads * 2, __imp__sub_000D6C00);
+    if (g_film == Film::None || !game::Wide()) return Emit(ctx, base, quads * 2, __imp__sub_000D6C00);
     float* q = &G<float>(ctx.eax);
     float saved[4] = {q[0], q[1], q[2], q[3]};
-    bool fill = game::Opt().fmv_scale == 0;
-    int axis = fill ? 1 : 0;  // corners are x, y pairs: grow y or narrow x
-    float middle = (q[axis] + q[axis + 2]) / 2;
-    float scale = fill ? 1 / game::Narrow() : game::Narrow();
-    q[axis] = middle + (q[axis] - middle) * scale;
-    q[axis + 2] = middle + (q[axis + 2] - middle) * scale;
+    if (g_film == Film::Menu) ScaleQuad(q, 0, std::min(1.0f, 16.0f / 9.0f / game::Aspect()));
+    else if (game::Opt().fmv_scale == 0) ScaleQuad(q, 1, 1 / game::Narrow());
+    else ScaleQuad(q, 0, game::Narrow());
     __imp__sub_000D6C00(ctx, base);
     std::copy(saved, saved + 4, q);
 }
 X86_EXTERN_FUNC(__imp__sub_001217C0);
 X86_FUNC(sub_001217C0) {
-    g_film = true;
+    g_film = CurrentFilm();
     __imp__sub_001217C0(ctx, base);
-    g_film = false;
+    g_film = Film::None;
 }
 X86_EXTERN_FUNC(__imp__sub_000D6AA0);
 X86_FUNC(sub_000D6AA0) { Emit(ctx, base, R32(ctx.esp + 8) * 2, __imp__sub_000D6AA0); }
