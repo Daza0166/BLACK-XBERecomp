@@ -14,6 +14,7 @@ struct Options {
     std::string monitor;  // its device name, \\.\DISPLAY2; empty the primary
     bool skip_intros = false;  // logos at boot and the film after pressing start
     bool fps_counter = false;
+    uint32_t fmv_scale = 0;  // 4:3 films on a wider screen: 0 fill it, top and bottom cut; 1 kept 4:3
     bool hdr_output = true;  // HDR10 on a display with Windows HDR on
     bool reload_blur = true;
     uint32_t ambient_occlusion = 0;  // screen space, from the scene's depth: 0 off, 1 SSAO, 2 GTAO

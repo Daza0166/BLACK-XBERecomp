@@ -65,6 +65,8 @@ constexpr uint32_t kMsaaValues[] = {0, 2, 4, 8};
 const char* const kMsaaNames[] = {"OFF", "2x", "4x", "8x"};
 constexpr uint32_t kAoValues[] = {0, 1, 2};
 const char* const kAoNames[] = {"OFF", "SSAO", "GTAO"};
+constexpr uint32_t kFmvScales[] = {0, 1};
+const char* const kFmvScaleNames[] = {"FILL", "4:3"};
 constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, audio::kOutputStereo,
                                       audio::kOutputSurround};
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
@@ -225,7 +227,7 @@ void Changed(bool display) {
 enum RowId { kDisplayMode, kResolution, kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kReloadBlur,
              kSkipIntros, kSensitivity, kInvertMouse, kWalkSpeed, kFov, kViewmodelFov, kHoldAim, kDrawDistance, kMsaa,
              kAmbientOcclusion, kAudioOutput, kHdrOutput, kMonitor, kLanguage, kSmaa,
-             kPauseOnFocusLoss };
+             kPauseOnFocusLoss, kFmvScale };
 
 using rows::Kind;
 using rows::Row;
@@ -242,6 +244,7 @@ constexpr Row kSettingsRows[] = {
     {Kind::Value, kHdrOutput, "HDR OUTPUT"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
+    {Kind::Value, kFmvScale, "FMV SCALE"},
     {Kind::Heading, -1, "GRAPHICS"},
     {Kind::Value, kMsaa, "MSAA"},
     {Kind::Value, kSmaa, "SMAA"},
@@ -388,6 +391,9 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
                           out.height * s.render_percent / 100);
             return true;
         }
+        case kFmvScale:
+            std::snprintf(text, sizeof(text), "%s", kFmvScaleNames[StepTable(kFmvScales, o.fmv_scale, step)]);
+            return true;
         case kFov:
             // 45 to 140 in steps of 1
             if (step) o.fov = uint32_t(StepRange(int(o.fov), 45, 140, 1, step));
