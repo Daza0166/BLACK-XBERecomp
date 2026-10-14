@@ -50,3 +50,4 @@ set_source_files_properties(src/common/version.rc PROPERTIES
     OBJECT_DEPENDS "${BUILD_INFO};${CMAKE_CURRENT_SOURCE_DIR}/src/common/europe.patch")
 target_sources(Black PRIVATE src/common/version.rc)
 add_dependencies(Black build_info)
+set_target_properties(Black PROPERTIES OUTPUT_NAME BLACK)

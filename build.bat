@@ -2,7 +2,7 @@
 setlocal
 set "GAME_TITLE=Black - XBE Recomp"
 set "GAME_XBE=default.xbe"
-set "GAME_EXE=Black"
+set "GAME_EXE=BLACK"
 title %GAME_TITLE% - Build
 cd /d "%~dp0"
 echo.

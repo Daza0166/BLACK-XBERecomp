@@ -8,7 +8,7 @@ This port was created using the [Xbox XBE Recomp](https://github.com/TGP482/Xbox
 
 ## Installation
 - Put your game files in the `assets` folder. This can be an ISO, or the extracted data files, of the USA or Europe release.
-- Run `Black.exe`.
+- Run `BLACK.exe`.
 - Recomp settings can be adjusted in the in-game options menu while the game is running, or through the Settings overlay, which is opened with F10 by default.
 
 ## Features
@@ -80,4 +80,4 @@ Install [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) and 
 
 ### 4. Build the Project
 - Run `build.bat`. The first build recompiles the entire game and can take 30 to 90 minutes on weaker systems.
-- When it finishes, run `out\build\release\Black.exe`.
+- When it finishes, run `out\build\release\BLACK.exe`.
