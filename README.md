@@ -57,7 +57,7 @@ Full keyboard and mouse support with raw input, adjustable sensitivity, inverted
 - **Memory**
   - 4 GB
 - **Storage**
-  - 5 GB for the game files, saves and shader cache
+  - 2 GB for the game files and saves
 
 ## Building
 ### 1. Clone the Repository
