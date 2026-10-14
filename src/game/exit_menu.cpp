@@ -17,52 +17,28 @@
 #include "app/app.h"
 #include "core/log.h"
 #include "game/flash.h"
+#include "game/layout.h"
 #include "xdk/hle.h"
 
 using namespace kernel;
+using namespace layout;
+using flash::kClipData;
+using flash::kDataCharacter;
+using flash::kSprite;
 using flash::Member;
 
 namespace {
 
-// front end: +0x44C the menu input of this tick, +0x454 input on, +0x455 held off, +0x381C 2 once the page is ready,
-// +0x3820 the page asked for, +0x3840 the page's name, +0x3884 1 once a page is asked for, +0x388C page leaving,
-// +0x390F ready
-constexpr uint32_t kInputId = 0x44C;
-constexpr uint32_t kInputOn = 0x454;
-constexpr uint32_t kInputHeldOff = 0x455;
-constexpr uint32_t kPageReady = 0x381C;
-constexpr uint32_t kTargetPage = 0x3820;
-constexpr uint32_t kPageName = 0x3840;
-constexpr uint32_t kPageAsked = 0x3884;
-constexpr uint32_t kPageLeaving = 0x388C;
-constexpr uint32_t kUiReady = 0x390F;
-constexpr uint32_t kPageRunning = 2;
-constexpr uint32_t kConfirmInput = 5;
-constexpr uint32_t kPlayerReady = 0x2ED408;
-
-// game object: +0x21070 its state, the front end's at +0x20220
-constexpr uint32_t kGame = 0x2D45F0;
-constexpr uint32_t kGameState = 0x21070;
-constexpr uint32_t kFrontEnd = 0x20220;
-
 // ConfirmWarning's title and message, text bindings as SetupConfirmWarning (0x11A660) fills them
 constexpr uint32_t kConfirmTitle = 0x2EC600;
 constexpr uint32_t kConfirmMessage = 0x2EC8F8;
-constexpr uint32_t kSetText = 0x11A4A0;  // eax binding, ebx UTF-8 text
+constexpr uint32_t kSetBindingText = 0x11A4A0;  // eax binding, ebx UTF-8 text
 constexpr uint32_t kStrings = 0x2D45D8;
 constexpr uint32_t kLookup = 0x1F3A80;   // thiscall strings (string id): UTF-8 text, 0 before they load
 constexpr uint32_t kQuitId = 0x4A8272D7;         // FE_QUIT
 constexpr uint32_t kQuitQuestionId = 0x50756353;  // "are you sure you want to quit?"
 
-// clip: +0x1C x, +0x20 y, +0x24 its colours, +0x48 its data; data +0x0C its character, +0x1C flags
-constexpr uint32_t kClipX = 0x1C;
-constexpr uint32_t kClipY = 0x20;
-constexpr uint32_t kClipColours = 0x24;
-constexpr uint32_t kColoursSize = 0x20;
-constexpr uint32_t kClipData = 0x48;
-constexpr uint32_t kDataCharacter = 0x0C;  // read on every frame the clip plays (0x10E3B0)
-
-// character +0x04 its movie; movie +0x28 import count, +0x2C imports of 0x10 {path, name, character, loaded movie}.
+// character and its movie: imports {path, name, character, loaded movie}.
 // A loaded movie +0 counts the imports holding it; at none it is freed and its characters unrelocated (0xFC360).
 constexpr uint32_t kCharacterMovie = 0x04;
 constexpr uint32_t kImportCount = 0x28;
@@ -71,9 +47,6 @@ constexpr uint32_t kImportSize = 0x10;
 constexpr uint32_t kImportName = 0x04;
 constexpr uint32_t kImportLoaded = 0x0C;
 constexpr uint32_t kMaxImports = 256;
-constexpr uint32_t kDataFlags = 0x1C;
-constexpr uint32_t kPlaying = 0x2000000;
-constexpr uint32_t kSprite = 0xD;
 
 constexpr char kConfirmPage[] = "ConfirmWarning";
 constexpr char kQuitText[] = "$FE_QUIT";
@@ -118,16 +91,12 @@ bool InFrontEnd() {
     return game && R32(game + kGameState) == game + kFrontEnd;
 }
 
-bool InputTaken(uint32_t ui) {
-    return G<uint8_t>(ui + kUiReady) && G<uint8_t>(ui + kInputOn) && !G<uint8_t>(ui + kInputHeldOff);
-}
-
 void SetConfirmText(X86Context& ctx, uint32_t binding, uint32_t id) {
     ctx.ecx = R32(kStrings);
     uint32_t text = CallGuest(ctx, kLookup, {id});
     ctx.eax = binding;
     ctx.ebx = text;
-    CallGuest(ctx, kSetText, {});
+    CallGuest(ctx, kSetBindingText, {});
 }
 
 // a stopped copy of the last stock button
@@ -139,15 +108,15 @@ uint32_t CopyButton(X86Context& ctx, const TitleMenu& title, uint32_t holder) {
     uint32_t clip = Member(ctx, holder, kButtonName);
     if (flash::Type(clip) != kSprite) return 0;
     uint32_t data = R32(clip + kClipData);
-    W32(data + kDataFlags, R32(data + kDataFlags) & ~kPlaying);
+    W32(data + flash::kDataFlags, R32(data + flash::kDataFlags) & ~flash::kDataPlaying);
     return clip;
 }
 
 // it keeps its place under the last stock button, which the page fades in
 void Follow(uint32_t button, uint32_t lead) {
-    G<float>(button + kClipX) = G<float>(lead + kClipX);
-    G<float>(button + kClipY) = G<float>(lead + kClipY) + kPitch;
-    std::memcpy(HostPtr(button + kClipColours), HostPtr(lead + kClipColours), kColoursSize);
+    G<float>(button + flash::kClipX) = G<float>(lead + flash::kClipX);
+    G<float>(button + flash::kClipY) = G<float>(lead + flash::kClipY) + kPitch;
+    std::memcpy(HostPtr(button + flash::kClipColours), HostPtr(lead + flash::kClipColours), flash::kColoursSize);
 }
 
 // the button joins the ring and asks the question; back asks it too
@@ -270,11 +239,11 @@ bool PointBack(X86Context& ctx, uint32_t root) {
 void UpdateConfirm(X86Context& ctx, uint32_t ui, uint32_t root) {
     if (!g_confirm_ready) g_confirm_ready = PointBack(ctx, root);
     if (R32(ui + kPageLeaving) || R32(ui + kPageAsked) == 1 || !InputTaken(ui)) return;
-    if (R32(ui + kInputId) != kConfirmInput) return;
+    if (R32(ui + kMenuInput) != kInputConfirm) return;
     uint32_t yes = Member(ctx, root, "yesButton");
     uint32_t focus = Member(ctx, Member(ctx, root, "MyMenu"), "mFocusButton");
     if (!yes || focus != yes) return;
-    W32(ui + kInputId, 0);
+    W32(ui + kMenuInput, 0);
     if (g_quitting) return;
     g_quitting = true;
     LOGI("quit: closing the window");
@@ -285,8 +254,8 @@ void Tick(X86Context& ctx, uint32_t ui) {
     const char* page = static_cast<const char*>(HostPtr(ui + kPageName));
     bool confirm = HasPrefix(page, kConfirmPage) && InFrontEnd();
     if (!confirm) g_confirm_ready = false;
-    if (R32(kPlayerReady) != 1 || !R32(flash::kPlayer) || R32(ui + kPageReady) != kPageRunning) return;
-    uint32_t root = flash::Level(4);
+    if (R32(flash::kPlayerReady) != 1 || !R32(flash::kPlayer) || R32(ui + kPageReady) != kPageRunning) return;
+    uint32_t root = flash::Level(flash::kMenuLevel);
     if (!root) return;
     if (const TitleMenu* title = FindTitleMenu(page)) {
         ReleaseTitleAudio();
@@ -309,7 +278,7 @@ void ExitMenu(X86Context& ctx, uint8_t*) {
 void ExitMenuSounds(X86Context& ctx, uint8_t*) {
     X86Context saved = ctx;
     const char* page = static_cast<const char*>(HostPtr(ctx.ebp + kPageName));
-    uint32_t root = flash::Level(4);
+    uint32_t root = flash::Level(flash::kMenuLevel);
     if (root && HasPrefix(page, kConfirmPage) && InFrontEnd()) ApplyTitleSounds(ctx, root);
     ctx = saved;
 }

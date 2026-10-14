@@ -14,9 +14,11 @@
 #include "common/translations.h"
 #include "core/log.h"
 #include "game/flash.h"
+#include "game/layout.h"
 #include "xdk/hle.h"
 
 using namespace kernel;
+using namespace layout;
 using app::rows::Row;
 using flash::Button;
 using flash::Find;
@@ -32,13 +34,15 @@ using flash::Text;
 
 namespace {
 
-constexpr uint32_t kPlayerReady = 0x2ED408, kHashTable = 0x2AC908;
+constexpr uint32_t kHashTable = 0x2AC908;
 const char* const kCaptions[] = {"RECOMP SETTINGS", "MOUSE AND KEYBOARD"};
-constexpr int kEntries = int(std::size(kCaptions)), kSlots = 8, kDepth = 100;
+constexpr int kEntries = int(std::size(kCaptions));
+constexpr int kSlots = 8;
+constexpr int kDepth = 100;
 constexpr int kEscape = 0x1B;
 const Row kPageRow{app::rows::Kind::Value, -1, "PAGE"};
 
-// the selection bar, Main.ButtonSelector: its parts by depth; once shown it stops on frame 10, data +0x18 9
+// the selection bar, Main.ButtonSelector: its parts by depth; once shown it stops on frame 10, its data's frame 9
 constexpr int kBarRest = 9;
 constexpr int kBarBox = 1;
 constexpr int kBarLine = 5;
@@ -48,8 +52,7 @@ constexpr float kBarLeft = -5.0f;  // the box's left end and the left tick
 constexpr float kTickGap = 10.0f;  // past the end of the widest value
 
 // the rows' font, as the name entry's caret measures it
-constexpr uint32_t kFonts = 0x2D45F0;
-constexpr uint32_t kFindFont = 0x13CD0;   // stdcall (fonts, name): a font
+constexpr uint32_t kFindFont = 0x13CD0;   // stdcall (game object, name): a font
 constexpr uint32_t kFontName = 0x28E63C;  // "Eurostile LT Std"
 constexpr float kTextHeight = 15.0f;      // the stock buttons' text fields
 constexpr float kTextLeft = 2.0f;         // the text field in its button's label clip
@@ -69,9 +72,14 @@ struct Host {
     const char* button;        // a stock button, copied for ours
     const char* under;         // the clip our buttons go under, the first this far down
     float drop;
-    const char* first, *last;  // the first and last button objects of its ring
+    const char* first;         // the first and last button objects of its ring
+    const char* last;
     int entries;               // our buttons; one opens both pages
-    float pitch, name_x, value_x, scale;  // the rows, from the stock button
+    // the rows, from the stock button
+    float pitch;
+    float name_x;
+    float value_x;
+    float scale;
     const char* hint;          // the string of a prompt our button takes the place of
     const char* stock[14];     // what the rows take the place of
     Bar bar;
@@ -91,7 +99,9 @@ constexpr Host kHosts[] = {
 
 // a text the page shows from here: its string id, the text, the data of the field showing it
 struct Field {
-    uint32_t id, text, data;
+    uint32_t id;
+    uint32_t text;
+    uint32_t data;
 };
 enum { kTitle, kEntry, kName = kEntry + kEntries, kValue = kName + kSlots, kFields = kValue + kSlots };
 constexpr uint32_t kFieldSize = 64;
@@ -99,11 +109,15 @@ Field g_fields[kFields];
 
 struct Page {
     const Host* host = nullptr;
-    int mode = -1;  // 0 the stock buttons and ours, from 1 the rows of kCaptions[mode - 1]
+    int mode = -1;  // 0 the stock buttons and ours, 1 and 2 the rows of each caption
     bool failed = false;
-    uint32_t first = 0, lead = 0;  // our first clip, the stock clip ours keep their places from
-    uint32_t entry[kEntries] = {}, name[kSlots] = {}, value[kSlots] = {};
-    size_t slots = 0, top = 0;
+    uint32_t first = 0;  // our first clip
+    uint32_t lead = 0;   // the stock clip ours keep their places from
+    uint32_t entry[kEntries] = {};
+    uint32_t name[kSlots] = {};
+    uint32_t value[kSlots] = {};
+    size_t slots = 0;
+    size_t top = 0;
     std::vector<const Row*> rows;  // null restores the defaults
     int capture = 0;  // a key binding: 1 the keys come up, 2 the next key binds or Escape leaves, 3 they come up again
     size_t bind = 0;  // its row
@@ -131,7 +145,7 @@ bool Show(X86Context& ctx, int n, uint32_t clip, const char* shows = nullptr, co
     }
     uint32_t field = FindField(clip, shows);
     if (!field) return false;
-    f.data = R32(field + 0x48);
+    f.data = R32(field + flash::kClipData);
     if (text) std::snprintf(static_cast<char*>(HostPtr(f.text)), kFieldSize, "%s", text);
     return Set(ctx, field, "variable", String(ctx, name));
 }
@@ -141,35 +155,34 @@ void Write(Field& f, const std::string& text) {
     if (!f.data || std::strncmp(text.c_str(), shown, kFieldSize - 1) == 0) return;
     std::snprintf(shown, kFieldSize, "%s", text.c_str());
     // made again at the next draw
-    W32(f.data + 0x6C, (R32(f.data + 0x6C) & ~1u) | 0x204);
+    W32(f.data + flash::kFieldFlags, (R32(f.data + flash::kFieldFlags) & ~1u) | 0x204);
 }
 
-// a copy of the stock button beside it, stopped: data +0x1C bit 25 playing
+// a copy of the stock button beside it, stopped
 uint32_t Copy(X86Context& ctx, uint32_t holder, const char* name, int depth) {
     char number[12];
     std::snprintf(number, sizeof(number), "%d", depth);
     ctx.eax = Text(g_page.host->button);
     CallGuest(ctx, flash::kCall, {Text("duplicateMovieClip"), 0, 2, Text(name), Text(number)});
     uint32_t clip = Member(ctx, holder, name);
-    if (flash::Type(clip) != 0xD) return 0;
-    uint32_t data = R32(clip + 0x48);
-    W32(data + 0x1C, R32(data + 0x1C) & ~0x2000000u);
+    if (flash::Type(clip) != flash::kSprite) return 0;
+    uint32_t data = R32(clip + flash::kClipData);
+    W32(data + flash::kDataFlags, R32(data + flash::kDataFlags) & ~flash::kDataPlaying);
     return clip;
 }
 
-// +0x58 bit 20 shown
 void Hide(uint32_t clip) {
-    if (flash::IsClip(clip)) W32(clip + 0x58, R32(clip + 0x58) & ~0x100000u);
+    if (flash::IsClip(clip)) W32(clip + flash::kClipFlags, R32(clip + flash::kClipFlags) & ~flash::kClipShown);
 }
 
-// ours keep their places from a stock clip, which the page slides and fades in: +0x1C x, y, then its colours
+// ours keep their places from a stock clip, which the page slides and fades in: x, y, then its colours
 void Follow(const Page& p) {
     const Host& h = *p.host;
     auto follow = [&p](uint32_t clip, float x, float y) {
         if (!clip) return;
-        G<float>(clip + 0x1C) = G<float>(p.lead + 0x1C) + x;
-        G<float>(clip + 0x20) = G<float>(p.lead + 0x20) + y;
-        std::memcpy(HostPtr(clip + 0x24), HostPtr(p.lead + 0x24), 0x20);
+        G<float>(clip + flash::kClipX) = G<float>(p.lead + flash::kClipX) + x;
+        G<float>(clip + flash::kClipY) = G<float>(p.lead + flash::kClipY) + y;
+        std::memcpy(HostPtr(clip + flash::kClipColours), HostPtr(p.lead + flash::kClipColours), flash::kColoursSize);
     };
     for (int i = 0; i < kEntries; i++) follow(p.entry[i], 0.0f, h.drop + h.pitch * float(i));
     for (int i = 0; i < kSlots; i++) {
@@ -187,7 +200,8 @@ void Sound(X86Context& ctx) {
 bool Entries(X86Context& ctx, uint32_t root, uint32_t holder) {
     Page& p = g_page;
     const Host& h = *p.host;
-    uint32_t top = Member(ctx, root, h.first), above = Member(ctx, root, h.last);
+    uint32_t top = Member(ctx, root, h.first);
+    uint32_t above = Member(ctx, root, h.last);
     p.lead = Member(ctx, holder, h.under);
     if (!top || !above || !flash::IsClip(p.lead)) return false;
     for (int i = 0; i < h.entries; i++) {
@@ -200,14 +214,15 @@ bool Entries(X86Context& ctx, uint32_t root, uint32_t holder) {
     Follow(p);
     CallGuest(ctx, flash::kRunActions, {R32(flash::kPlayer)});
     for (int i = 0; i < h.entries; i++) {
-        if (!Button(ctx, p.entry[i], top) || !Set(ctx, p.entry[i], "actionSelectPage", String(ctx, h.page))) return false;
+        if (!Button(ctx, p.entry[i], top)) return false;
+        if (!Set(ctx, p.entry[i], "actionSelectPage", String(ctx, h.page))) return false;
         Link(ctx, above, p.entry[i]);
         above = p.entry[i];
     }
     Link(ctx, above, top);
-    if (h.hint)
-        for (uint32_t clip = FindField(holder, h.hint); clip; clip = R32(clip + 0x44))
-            if (R32(clip + 0x44) == holder) Hide(clip);
+    if (!h.hint) return true;
+    for (uint32_t clip = FindField(holder, h.hint); clip; clip = R32(clip + flash::kClipParent))
+        if (R32(clip + flash::kClipParent) == holder) Hide(clip);
     return true;
 }
 
@@ -228,7 +243,8 @@ void Fill(Page& p) {
 bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
     Page& p = g_page;
     const Host& h = *p.host;
-    uint32_t like = Member(ctx, root, h.first), nothing = Method(ctx, like, "Select");
+    uint32_t like = Member(ctx, root, h.first);
+    uint32_t nothing = Method(ctx, like, "Select");
     p.lead = Member(ctx, holder, std::strrchr(h.button, '.') + 1);
     if (!nothing || !flash::IsClip(p.lead)) return false;
     p.slots = kSlots;
@@ -240,7 +256,10 @@ bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
         name[3] = 'V';
         p.value[i] = Copy(ctx, holder, name, kDepth + kSlots + int(i));
         if (!p.name[i] || !p.value[i]) return false;
-        for (uint32_t clip : {p.name[i], p.value[i]}) G<float>(clip + 0xC) = G<float>(clip + 0x18) = h.scale;
+        for (uint32_t clip : {p.name[i], p.value[i]}) {
+            G<float>(clip + flash::kClipScaleX) = h.scale;
+            G<float>(clip + flash::kClipScaleY) = h.scale;
+        }
         if (!Show(ctx, kName + int(i), p.name[i]) || !Show(ctx, kValue + int(i), p.value[i])) return false;
     }
     p.first = p.name[0];
@@ -273,12 +292,11 @@ std::string ValueText(const Page& p, size_t i) {
     return app::Ui(value);
 }
 
-// font +0x1C its last glyph, +0x20 its glyphs by code & 0x7F, each 0x28 bytes on with +0x1C the code
 uint32_t Glyph(uint32_t font, uint16_t code) {
-    uint32_t glyph = R32(font + 0x20 + (code & 0x7F) * 4);
-    uint32_t last = R32(font + 0x1C);
+    uint32_t glyph = R32(font + kFontGlyphs + (code & 0x7F) * 4);
+    uint32_t last = R32(font + kFontLastGlyph);
     if (!glyph) return last;
-    for (int left = 256; G<uint16_t>(glyph + 0x1C) != code && glyph != last && left; left--) glyph += 0x28;
+    for (int left = 256; G<uint16_t>(glyph + kGlyphCode) != code && glyph != last && left; left--) glyph += kGlyphSize;
     return glyph;
 }
 
@@ -300,27 +318,27 @@ std::vector<uint16_t> Codes(const std::string& text) {
     return codes;
 }
 
-// a text's width at a height of 1, as 0xC3AF0: font +0x08 its size, +0x10 a spacing; glyph +0x08 width, +0x10
-// left, +0x18 advance, +0x20 spaced
+// a text's width at a height of 1, as 0xC3AF0
 float Measure(uint32_t font, const std::string& text) {
     std::vector<uint16_t> codes = Codes(text);
     if (!font || codes.empty()) return 0.0f;
     uint32_t glyph = Glyph(font, codes[0]);
-    float x = -G<float>(glyph + 0x10);
+    float x = -G<float>(glyph + kGlyphLeft);
     for (size_t i = 1; i < codes.size(); i++) {
-        x += G<float>(glyph + 0x18);
+        x += G<float>(glyph + kGlyphAdvance);
         glyph = Glyph(font, codes[i]);
     }
-    float spacing = R32(glyph + 0x20) ? G<float>(font + 0x10) : 1.0f;
-    return G<float>(font + 0x08) * (x + G<float>(glyph + 0x10) + G<float>(glyph + 0x08) * spacing);
+    float spacing = R32(glyph + kGlyphSpaced) ? G<float>(font + kFontSpacing) : 1.0f;
+    float end = x + G<float>(glyph + kGlyphLeft) + G<float>(glyph + kGlyphWidth) * spacing;
+    return G<float>(font + kFontScale) * end;
 }
 
-// how far right of the focused name the widest value of the page ends, the label clip at +0xC scaled as it lights
+// how far right of the focused name the widest value of the page ends, the label clip scaled as it lights
 float Reach(X86Context& ctx, const Page& p, uint32_t focus) {
     const Host& h = *p.host;
-    uint32_t font = CallGuest(ctx, kFindFont, {R32(kFonts), kFontName});
+    uint32_t font = CallGuest(ctx, kFindFont, {R32(kGame), kFontName});
     uint32_t label = flash::FirstChild(focus);
-    float scale = h.scale * (label ? G<float>(label + 0xC) : 1.0f);
+    float scale = h.scale * (label ? G<float>(label + flash::kClipScaleX) : 1.0f);
     // capture text left out so the bar keeps its width while a key is bound
     Page shown = p;
     shown.capture = 0;
@@ -329,24 +347,24 @@ float Reach(X86Context& ctx, const Page& p, uint32_t focus) {
     return h.value_x - h.name_x + (kTextLeft + widest * kTextHeight) * scale + kTickGap;
 }
 
-// the bar on the focused row reaches past the values, its ends and line as stock: +0xC x scale, +0x1C x
+// the bar on the focused row reaches past the values, its ends and line as stock
 void StretchBar(X86Context& ctx, const Page& p, uint32_t root, uint32_t focus) {
     const Bar& stock = p.host->bar;
     uint32_t bar = Member(ctx, Member(ctx, root, "Main"), "ButtonSelector");
-    if (flash::Type(bar) != 0xD) return;
-    uint32_t data = R32(bar + 0x48);
-    if (!data || data == 0xBAADF00D || R32(data + 0x18) != kBarRest) return;
+    if (flash::Type(bar) != flash::kSprite) return;
+    uint32_t data = R32(bar + flash::kClipData);
+    if (!data || data == flash::kNoData || R32(data + flash::kDataFrame) != kBarRest) return;
     float right = std::max(stock.tick, Reach(ctx, p, focus));
     float stretch = (right - kBarLeft) / (stock.tick - kBarLeft);
     int left = 256;
-    for (uint32_t part = flash::FirstChild(bar); part && left; part = R32(part + 0x50), left--) {
-        int depth = int32_t(R32(part + 0x54) << 15) >> 15;
-        if (depth == kBarBox) G<float>(part + 0xC) = stock.box * stretch;
-        if (depth == kBarLine) G<float>(part + 0x1C) = stock.line + right - stock.tick;
-        if (depth == kBarTick) G<float>(part + 0x1C) = right;
+    for (uint32_t part = flash::FirstChild(bar); part && left; part = R32(part + flash::kClipNext), left--) {
+        int depth = flash::Depth(part);
+        if (depth == kBarBox) G<float>(part + flash::kClipScaleX) = stock.box * stretch;
+        if (depth == kBarLine) G<float>(part + flash::kClipX) = stock.line + right - stock.tick;
+        if (depth == kBarTick) G<float>(part + flash::kClipX) = right;
         if (depth == kBarScan) {
-            G<float>(part + 0xC) = stretch;
-            G<float>(part + 0x1C) = kBarLeft + (stock.scan - kBarLeft) * stretch;
+            G<float>(part + flash::kClipScaleX) = stretch;
+            G<float>(part + flash::kClipX) = kBarLeft + (stock.scan - kBarLeft) * stretch;
         }
     }
 }
@@ -359,23 +377,134 @@ void Clear(X86Context& ctx, const Row* row) {
     if (app::rows::Value(*row) != was) Sound(ctx);
 }
 
-// front end: +0x44C the menu input of this tick, 1 to 6 up down left right confirm back, +0x454 input on, +0x455 held
-// off, +0x381C 2 once the page is ready, +0x3840 its name, +0x3884 another page asked for, +0x388C page leaving, 1 as
-// it goes
+const Host* FindHost(const char* name) {
+    for (const Host& h : kHosts)
+        if (std::strcmp(name, h.page) == 0) return &h;
+    return nullptr;
+}
+
+// the page's clips made again: the stock buttons and ours, or the rows of the mode asked for
+void Build(X86Context& ctx, const Host& host, uint32_t root, uint32_t holder, uint32_t menu) {
+    Page& p = g_page;
+    p = {};
+    for (Field& f : g_fields) f.data = 0;
+    p.host = &host;
+    p.mode = g_next;
+    g_next = 0;
+    p.failed = !(p.mode ? Rows(ctx, root, holder, menu) : Entries(ctx, root, holder));
+    const char* shown = p.mode ? kCaptions[p.mode - 1] : "buttons";
+    LOGI("options menu: %s, %s%s", host.page, shown, p.failed ? ", failed" : "");
+    if (!p.failed && !p.mode && g_last) Focus(ctx, p.entry[std::min(g_last, host.entries) - 1]);
+    g_last = p.mode;
+}
+
+// the key binding's next step, see Page::capture
+void UpdateCapture(uint32_t ui, uint32_t id) {
+    Page& p = g_page;
+    int vk = input::PressedKey();
+    if (p.capture == 2 && vk) {
+        if (vk != kEscape) input::Bind(size_t(p.rows[p.bind]->id), vk);
+        p.capture = 3;
+    } else if (p.capture != 2 && !vk) {
+        p.capture = p.capture == 1 ? 2 : 0;
+    } else if (id == kInputBack) {
+        p.capture = 0;  // a controller's back
+    }
+    W32(ui + kMenuInput, 0);
+}
+
+// past either end the rows scroll, then go round; false off the ends
+bool UpdateScroll(X86Context& ctx, size_t slot, uint32_t id) {
+    Page& p = g_page;
+    size_t hidden = p.rows.size() - p.slots;
+    if (id == kInputUp && slot == 0) {
+        if (p.top) {
+            p.top--;
+        } else {
+            p.top = hidden;
+            Focus(ctx, p.name[p.slots - 1]);
+        }
+        return true;
+    }
+    if (id == kInputDown && slot == p.slots - 1) {
+        if (p.top < hidden) {
+            p.top++;
+        } else {
+            p.top = 0;
+            Focus(ctx, p.name[0]);
+        }
+        return true;
+    }
+    return false;
+}
+
+// left, right or confirm on a row: the PAGE row turns the page, a value steps, a binding listens, the last restores
+void ApplyRowInput(size_t slot, uint32_t id, bool locked) {
+    Page& p = g_page;
+    const Row* row = p.rows[p.top + slot];
+    bool value = row && row->kind == app::rows::Kind::Value;
+    bool changes = id >= kInputLeft && id <= kInputConfirm;
+    if (row == &kPageRow && changes) {
+        p.mode = 3 - p.mode;
+        Fill(p);
+    } else if (value && changes) {
+        if (!locked) app::rows::Value(*row, id == kInputLeft ? -1 : 1);
+    } else if (id == kInputConfirm && row) {
+        p.capture = 1;
+        p.bind = p.top + slot;
+    } else if (id == kInputConfirm) {
+        app::rows::Defaults(p.mode - 1);
+    }
+}
+
+void UpdateRow(X86Context& ctx, uint32_t ui, size_t slot, uint32_t id, bool clear) {
+    const Row* row = g_page.rows[g_page.top + slot];
+    if (clear) Clear(ctx, row);
+    bool value = row && row->kind == app::rows::Kind::Value;
+    bool locked = row && !app::rows::Enabled(*row);  // greyed in the panel
+    bool edge = UpdateScroll(ctx, slot, id);
+    if (edge) {
+        W32(ui + kMenuInput, 0);
+    } else {
+        ApplyRowInput(slot, id, locked);
+    }
+    bool stepped = value && !locked && (id == kInputLeft || id == kInputRight);
+    if (edge || stepped) Sound(ctx);
+}
+
+// the title, the rows' names and values
+void UpdateTexts(const Page& p) {
+    // a value lights up with its name: a clip's matrix, then its colours
+    constexpr uint32_t kMatrixAndColours = 0x38;
+    Write(g_fields[kTitle], app::Ui(kCaptions[p.mode - 1]));
+    for (size_t i = 0; i < p.slots; i++) {
+        const Row* row = p.rows[p.top + i];
+        Write(g_fields[kName + i], app::Ui(row ? row->label : "RESTORE DEFAULTS"));
+        Write(g_fields[kValue + i], ValueText(p, p.top + i));
+        uint32_t from = flash::FirstChild(p.name[i]);
+        uint32_t to = flash::FirstChild(p.value[i]);
+        if (!from || !to) continue;
+        std::memcpy(HostPtr(to + flash::kClipMatrix), HostPtr(from + flash::kClipMatrix), kMatrixAndColours);
+    }
+}
+
 void Tick(X86Context& ctx, uint32_t ui) {
     // read every tick, so a Delete that answers a capture is not a fresh press once it ends
     bool clear = input::TakeDeletePress();
     Page& p = g_page;
-    const char* name = static_cast<const char*>(HostPtr(ui + 0x3840));
-    const Host* host = std::find_if(std::begin(kHosts), std::end(kHosts), [name](const Host& h) { return std::strcmp(name, h.page) == 0; });
-    if (host == std::end(kHosts) || R32(kPlayerReady) != 1 || !R32(flash::kPlayer) || R32(ui + 0x381C) != 2) {
-        if (*name && host == std::end(kHosts)) g_next = g_last = 0;
+    const char* name = static_cast<const char*>(HostPtr(ui + kPageName));
+    const Host* host = FindHost(name);
+    bool running = host && R32(flash::kPlayerReady) == 1 && R32(flash::kPlayer) && R32(ui + kPageReady) == kPageRunning;
+    if (!running) {
+        if (*name && !host) g_next = g_last = 0;
         p = {};
         return;
     }
-    uint32_t going = R32(ui + 0x388C);
-    bool leaving = going || R32(ui + 0x3884) == 1;
-    uint32_t root = flash::Level(4), holder = Member(ctx, root, "Main"), menu = Member(ctx, root, "MyMenu");
+    uint32_t going = R32(ui + kPageLeaving);
+    bool leaving = going || R32(ui + kPageAsked) == 1;
+    uint32_t root = flash::Level(flash::kMenuLevel);
+    uint32_t holder = Member(ctx, root, "Main");
+    uint32_t menu = Member(ctx, root, "MyMenu");
     if (host->holder) holder = Member(ctx, holder, host->holder);
     if (!holder || !menu) return;
     if (p.failed) {
@@ -383,86 +512,26 @@ void Tick(X86Context& ctx, uint32_t ui) {
         return;
     }
     if (p.mode < 0 || Member(ctx, holder, p.mode ? "RC_N0" : "RC_E0") != p.first) {
-        if (leaving) return;
-        p = {};
-        for (Field& f : g_fields) f.data = 0;
-        p.host = host;
-        p.mode = g_next;
-        g_next = 0;
-        p.failed = !(p.mode ? Rows(ctx, root, holder, menu) : Entries(ctx, root, holder));
-        LOGI("options menu: %s, %s%s", host->page, p.mode ? kCaptions[p.mode - 1] : "buttons", p.failed ? ", failed" : "");
-        if (!p.failed && !p.mode && g_last) Focus(ctx, p.entry[std::min(g_last, host->entries) - 1]);
-        g_last = p.mode;
+        if (!leaving) Build(ctx, *host, root, holder, menu);
         return;
     }
     Follow(p);
     if (going == 1) p = {};
     if (leaving) return;
-    bool taken = G<uint8_t>(ui + 0x390F) && G<uint8_t>(ui + 0x454) && !G<uint8_t>(ui + 0x455);
-    uint32_t id = taken ? R32(ui + 0x44C) : 0, focus = Member(ctx, menu, "mFocusButton");
+    uint32_t id = InputTaken(ui) ? R32(ui + kMenuInput) : 0;
+    uint32_t focus = Member(ctx, menu, "mFocusButton");
     if (!p.mode) {
         const uint32_t* at = std::find(std::begin(p.entry), std::end(p.entry), focus);
-        if (id == 5 && at != std::end(p.entry)) g_next = int(at - p.entry) + 1;
+        if (id == kInputConfirm && at != std::end(p.entry)) g_next = int(at - p.entry) + 1;
         return;
     }
-    size_t slot = size_t(std::find(p.name, p.name + p.slots, focus) - p.name), hidden = p.rows.size() - p.slots;
+    size_t slot = size_t(std::find(p.name, p.name + p.slots, focus) - p.name);
     if (p.capture) {
-        int vk = input::PressedKey();
-        if (p.capture == 2 && vk) {
-            if (vk != kEscape) input::Bind(size_t(p.rows[p.bind]->id), vk);
-            p.capture = 3;
-        } else if (p.capture != 2 && !vk) {
-            p.capture = p.capture == 1 ? 2 : 0;
-        } else if (id == 6) {
-            p.capture = 0;  // a controller's back
-        }
-        W32(ui + 0x44C, 0);
+        UpdateCapture(ui, id);
     } else if (slot < p.slots) {
-        const Row* row = p.rows[p.top + slot];
-        if (clear) Clear(ctx, row);
-        // past either end the rows scroll, then go round
-        bool edge = true, value = row && row->kind == app::rows::Kind::Value;
-        bool locked = row && !app::rows::Enabled(*row);  // greyed in the panel
-        if (id == 1 && slot == 0) {
-            if (p.top) {
-                p.top--;
-            } else {
-                p.top = hidden;
-                Focus(ctx, p.name[p.slots - 1]);
-            }
-        } else if (id == 2 && slot == p.slots - 1) {
-            if (p.top < hidden) {
-                p.top++;
-            } else {
-                p.top = 0;
-                Focus(ctx, p.name[0]);
-            }
-        } else {
-            edge = false;
-            if (row == &kPageRow && id >= 3 && id <= 5) {
-                p.mode = 3 - p.mode;
-                Fill(p);
-            } else if (value && id >= 3 && id <= 5) {
-                if (!locked) app::rows::Value(*row, id == 3 ? -1 : 1);
-            } else if (id == 5 && row) {
-                p.capture = 1;
-                p.bind = p.top + slot;
-            } else if (id == 5) {
-                app::rows::Defaults(p.mode - 1);
-            }
-        }
-        if (edge) W32(ui + 0x44C, 0);
-        if (edge || (value && !locked && (id == 3 || id == 4))) Sound(ctx);
+        UpdateRow(ctx, ui, slot, id, clear);
     }
-    Write(g_fields[kTitle], app::Ui(kCaptions[p.mode - 1]));
-    for (size_t i = 0; i < p.slots; i++) {
-        const Row* row = p.rows[p.top + i];
-        Write(g_fields[kName + i], app::Ui(row ? row->label : "RESTORE DEFAULTS"));
-        Write(g_fields[kValue + i], ValueText(p, p.top + i));
-        // a value lights up with its name: +0xC a clip's matrix, then its colours
-        uint32_t from = flash::FirstChild(p.name[i]), to = flash::FirstChild(p.value[i]);
-        if (from && to) std::memcpy(HostPtr(to + 0xC), HostPtr(from + 0xC), 0x38);
-    }
+    UpdateTexts(p);
     if (slot < p.slots) StretchBar(ctx, p, root, focus);
 }
 

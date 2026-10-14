@@ -24,9 +24,10 @@ bool Translated();  // language.cpp
 namespace {
 
 constexpr uint32_t kResetTexts = 0xECA90;  // every text on screen is made again from its string
-constexpr uint32_t kPlayerReady = 0x2ED408;
 // string ids
-constexpr uint32_t kConfirm = 0xE0CA7C5F, kBack = 0x64199B75, kBackspace = 0x32D594BD;
+constexpr uint32_t kConfirm = 0xE0CA7C5F;
+constexpr uint32_t kBack = 0x64199B75;
+constexpr uint32_t kBackspace = 0x32D594BD;
 constexpr uint32_t kPressStart[] = {0x2FCCE936, 0x905E4EE0, 0x661A3A37};
 // a hint's "PRESS (A) :" strings, in the order the keyboard numbers the pad: A B X Y black white, the triggers,
 // dpad up down left right, start, back, the thumbs
@@ -73,9 +74,10 @@ std::unordered_map<uint64_t, uint32_t> g_wordings;
 // a prompt is a clip of a "Button" icon and a "Text": on the keyboard the icon goes and the text takes its place
 void Prompts(uint32_t clip, bool keyboard, int depth) {
     int left = 4096;
-    for (uint32_t child = flash::FirstChild(clip); child && left; child = R32(child + 0x50), left--) {
-        uint32_t icon = 0, text = 0;
-        for (uint32_t part = flash::FirstChild(child); part && left; part = R32(part + 0x50), left--) {
+    for (uint32_t child = flash::FirstChild(clip); child && left; child = R32(child + flash::kClipNext), left--) {
+        uint32_t icon = 0;
+        uint32_t text = 0;
+        for (uint32_t part = flash::FirstChild(child); part && left; part = R32(part + flash::kClipNext), left--) {
             if (!flash::IsClip(part)) continue;
             if (_stricmp(flash::Name(part), "Button") == 0) icon = part;
             if (_stricmp(flash::Name(part), "Text") == 0) text = part;
@@ -84,11 +86,11 @@ void Prompts(uint32_t clip, bool keyboard, int depth) {
             if (depth < 8) Prompts(child, keyboard, depth + 1);
             continue;
         }
-        bool shown = R32(icon + 0x58) & 0x100000;
+        bool shown = R32(icon + flash::kClipFlags) & flash::kClipShown;
         if (shown != keyboard) continue;
-        W32(icon + 0x58, R32(icon + 0x58) ^ 0x100000);
-        G<float>(text + 0x1C) += keyboard ? -kIconWidth : kIconWidth;
-        W32(text + 0x58, R32(text + 0x58) | 0x10000);
+        W32(icon + flash::kClipFlags, R32(icon + flash::kClipFlags) ^ flash::kClipShown);
+        G<float>(text + flash::kClipX) += keyboard ? -kIconWidth : kIconWidth;
+        W32(text + flash::kClipFlags, R32(text + flash::kClipFlags) | flash::kClipPlaced);
     }
 }
 
@@ -107,8 +109,8 @@ X86_FUNC(sub_001F3A80) {
     bool keyboard = input::KeyboardActive();
     std::lock_guard lock(g_lock);
     auto [it, fresh] = g_wordings.try_emplace(uint64_t(id) << 1 | keyboard, 0);
-    if (const uint32_t* button = std::find(std::begin(kButtons), std::end(kButtons), id);
-        keyboard && button != std::end(kButtons)) {
+    const uint32_t* button = std::find(std::begin(kButtons), std::end(kButtons), id);
+    if (keyboard && button != std::end(kButtons)) {
         // follows the bindings: worded at every ask
         std::string key = input::ButtonKey(int(button - kButtons));
         if (key.empty() || (!it->second && !(it->second = mem::AllocSystem(kHintSize)))) return;
@@ -127,15 +129,16 @@ void MenuPrompts(X86Context& ctx, uint8_t*) {
     static int was = -1;
     bool keyboard = input::KeyboardActive();
     if (int(keyboard) != was) {
-        if (was >= 0 && R32(kPlayerReady) == 1 && R32(flash::kPlayer)) {
+        if (was >= 0 && R32(flash::kPlayerReady) == 1 && R32(flash::kPlayer)) {
             X86Context saved = ctx;
             CallGuest(ctx, kResetTexts, {});
             ctx = saved;
         }
         was = keyboard;
     }
-    Prompts(flash::Level(4), keyboard, 0);
-    static uint32_t glyphs[4], keys;
+    Prompts(flash::Level(flash::kMenuLevel), keyboard, 0);
+    static uint32_t glyphs[4];
+    static uint32_t keys;
     if (!keys && (keys = mem::AllocSystem(4 * kKeySize)))
         for (uint32_t i = 0; i < 4; i++) glyphs[i] = R32(kPickupGlyphs + i * 4);
     for (uint32_t i = 0; keys && i < 4; i++) {

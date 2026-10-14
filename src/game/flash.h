@@ -11,53 +11,112 @@
 
 namespace flash {
 
-constexpr uint32_t kPlayer = 0x2EC988;  // +0x18 its movies
+constexpr uint32_t kPlayer = 0x2EC988;
+constexpr uint32_t kPlayerReady = 0x2ED408;  // 1 once the player runs
+constexpr uint32_t kPlayerMovies = 0x18;
 
-// value: +0 vtable (+0xC its members), +4 flags: 0x10 defined, type from bit 25
+// value: +0 vtable
+constexpr uint32_t kMembersMethod = 0x0C;  // in the vtable
+constexpr uint32_t kValueFlags = 4;
+constexpr uint32_t kValueDefined = 0x10;
+constexpr uint32_t kTypeShift = 25;
+constexpr uint32_t kValueNumber = 8;  // an integer's or a float's
+
+// value types
+constexpr uint32_t kFloat = 6;
+constexpr uint32_t kInteger = 7;
+constexpr uint32_t kFirstClip = 0xC;
+constexpr uint32_t kSprite = 0xD;
+constexpr uint32_t kTextField = 0xF;
+constexpr uint32_t kMovie = 0x12;
+
+// clip: matrix a b c d x y, depth in 17 bits
+constexpr uint32_t kClipName = 0x08;
+constexpr uint32_t kClipMatrix = 0x0C;
+constexpr uint32_t kClipScaleX = kClipMatrix;  // the matrix's a
+constexpr uint32_t kClipScaleY = 0x18;         // its d
+constexpr uint32_t kClipX = 0x1C;
+constexpr uint32_t kClipY = 0x20;
+constexpr uint32_t kClipColours = 0x24;
+constexpr uint32_t kColoursSize = 0x20;
+constexpr uint32_t kClipParent = 0x44;
+constexpr uint32_t kClipData = 0x48;
+constexpr uint32_t kClipNext = 0x50;
+constexpr uint32_t kClipDepth = 0x54;
+constexpr uint32_t kClipFlags = 0x58;
+constexpr uint32_t kClipShown = 0x100000;
+constexpr uint32_t kClipPlaced = 0x10000;  // placed by the script
+
+// a sprite's data
+constexpr uint32_t kDataCharacter = 0x0C;  // read on every frame the clip plays (0x10E3B0)
+constexpr uint32_t kDataFrame = 0x18;
+constexpr uint32_t kDataFlags = 0x1C;
+constexpr uint32_t kDataPlaying = 0x2000000;
+constexpr uint32_t kDataChildren = 0x24;
+constexpr uint32_t kNoData = 0xBAADF00D;
+
+// a text field's data
+constexpr uint32_t kFieldString = 0x1C;
+constexpr uint32_t kFieldFlags = 0x6C;
+
+// a value's members: {name, value} each
+constexpr uint32_t kMemberSlots = 0;
+constexpr uint32_t kMemberTable = 4;
+constexpr uint32_t kMemberClass = 8;
+constexpr uint32_t kMemberSize = 8;
+constexpr uint32_t kNameText = 8;          // in a name
+constexpr uint32_t kDeletedName = 0x2AC7EC;  // the name of a deleted member
+
 inline uint32_t Type(uint32_t value) {
-    return value && (kernel::R32(value + 4) & 0x10) ? kernel::R32(value + 4) >> 25 : 0;
+    if (!value || !(kernel::R32(value + kValueFlags) & kValueDefined)) return 0;
+    return kernel::R32(value + kValueFlags) >> kTypeShift;
 }
 
-// clip: +8 name (text at +8), +0x0C matrix a b c d x y, +0x44 parent, +0x48 its data, +0x50 next, +0x54 depth in
-// 17 bits, +0x58 flags: 0x100000 visible, 0x10000 placed by the script
-inline bool IsClip(uint32_t value) { return Type(value) >= 0xC && Type(value) <= 0x12; }
+inline bool IsClip(uint32_t value) { return Type(value) >= kFirstClip && Type(value) <= kMovie; }
 
-inline const char* Name(uint32_t clip) { return static_cast<const char*>(kernel::HostPtr(kernel::R32(clip + 8) + 8)); }
+inline const char* NameText(uint32_t name) { return static_cast<const char*>(kernel::HostPtr(name + kNameText)); }
 
-// a value's members: +0 slots, +4 {name, value} each, a name's text at +8
+inline const char* Name(uint32_t clip) { return NameText(kernel::R32(clip + kClipName)); }
+
+inline int Depth(uint32_t clip) { return int32_t(kernel::R32(clip + kClipDepth) << 15) >> 15; }
+
 inline uint32_t Members(X86Context& ctx, uint32_t value) {
     if (!Type(value)) return 0;
     ctx.ecx = value;
-    return kernel::CallGuest(ctx, kernel::R32(kernel::R32(value) + 0xC), {});
+    return kernel::CallGuest(ctx, kernel::R32(kernel::R32(value) + kMembersMethod), {});
 }
 
 inline uint32_t Find(uint32_t members, const char* name) {
-    uint32_t slots = members ? kernel::R32(members) : 0, table = members ? kernel::R32(members + 4) : 0;
+    uint32_t slots = members ? kernel::R32(members + kMemberSlots) : 0;
+    uint32_t table = members ? kernel::R32(members + kMemberTable) : 0;
     for (uint32_t i = 0; table && slots <= 0x1000 && i < slots; i++) {
-        uint32_t key = kernel::R32(table + i * 8), value = kernel::R32(table + i * 8 + 4);
-        // 0x2AC7EC the name of a deleted member
-        if (key && key != 0x2AC7EC && _stricmp(static_cast<const char*>(kernel::HostPtr(key + 8)), name) == 0)
-            return Type(value) ? value : 0;
+        uint32_t key = kernel::R32(table + i * kMemberSize);
+        uint32_t value = kernel::R32(table + i * kMemberSize + 4);
+        if (key && key != kDeletedName && _stricmp(NameText(key), name) == 0) return Type(value) ? value : 0;
     }
     return 0;
 }
 
 inline uint32_t Member(X86Context& ctx, uint32_t value, const char* name) { return Find(Members(ctx, value), name); }
 
-// the movie at a level, menu pages are at 4
+constexpr int kMenuLevel = 4;  // the level menu pages load at
+
+// the movie at a level
 inline uint32_t Level(int level) {
-    uint32_t player = kernel::R32(kPlayer), movies = player ? kernel::R32(player + 0x18) : 0;
-    for (uint32_t clip = movies ? kernel::R32(movies) : 0; clip; clip = kernel::R32(clip + 0x50))
-        if (int32_t(kernel::R32(clip + 0x54) << 15) >> 15 == level) return Type(clip) == 0x12 ? clip : 0;
+    uint32_t player = kernel::R32(kPlayer);
+    uint32_t movies = player ? kernel::R32(player + kPlayerMovies) : 0;
+    for (uint32_t clip = movies ? kernel::R32(movies) : 0; clip; clip = kernel::R32(clip + kClipNext))
+        if (Depth(clip) == level) return Type(clip) == kMovie ? clip : 0;
     return 0;
 }
 
-// a sprite's first child, the rest follow at +0x50
+// a sprite's first child, the rest follow at kClipNext
 inline uint32_t FirstChild(uint32_t clip) {
-    if (Type(clip) != 0xD && Type(clip) != 0x12) return 0;
-    uint32_t data = kernel::R32(clip + 0x48), list = data && data != 0xBAADF00D ? kernel::R32(data + 0x24) : 0;
+    if (Type(clip) != kSprite && Type(clip) != kMovie) return 0;
+    uint32_t data = kernel::R32(clip + kClipData);
+    uint32_t list = data && data != kNoData ? kernel::R32(data + kDataChildren) : 0;
     uint32_t head = list ? kernel::R32(list) : 0;
-    return head ? kernel::R32(head + 0x50) : 0;
+    return head ? kernel::R32(head + kClipNext) : 0;
 }
 
 // the script: calls into it and its members set from here
@@ -77,7 +136,8 @@ inline uint32_t KeptName(const char* text) {
         at = mem::AllocSystem(length + 13);
         kernel::W32(at, at + 4);
         kernel::G<uint16_t>(at + 4) = 0x4000;
-        kernel::G<uint16_t>(at + 6) = kernel::G<uint16_t>(at + 8) = uint16_t(length);
+        kernel::G<uint16_t>(at + 6) = uint16_t(length);
+        kernel::G<uint16_t>(at + 8) = uint16_t(length);
         kernel::G<uint16_t>(at + 10) = 0;
         std::memcpy(kernel::HostPtr(at + 12), text, length + 1);
     }
@@ -95,24 +155,24 @@ inline bool Set(X86Context& ctx, uint32_t object, const char* name, uint32_t val
     return kernel::CallGuest(ctx, kSetMember, {kInterpreter, object, 1, 0, 1}) & 0xFF;
 }
 
-// a text field in a clip, the one showing that string or the first: data +0x1C its string's name
+// a text field in a clip, the one showing that string or the first
 inline uint32_t FindField(uint32_t clip, const char* shows, int depth = 0) {
     int left = 256;
-    for (uint32_t child = FirstChild(clip); child && left; child = kernel::R32(child + 0x50), left--) {
-        uint32_t data = Type(child) == 0xF ? kernel::R32(child + 0x48) : 0;
-        const char* name = data ? static_cast<const char*>(kernel::HostPtr(kernel::R32(data + 0x1C) + 8)) : nullptr;
+    for (uint32_t child = FirstChild(clip); child && left; child = kernel::R32(child + kClipNext), left--) {
+        uint32_t data = Type(child) == kTextField ? kernel::R32(child + kClipData) : 0;
+        const char* name = data ? NameText(kernel::R32(data + kFieldString)) : nullptr;
         if (data && (!shows || std::strcmp(name, shows) == 0)) return child;
         if (uint32_t found = depth < 4 ? FindField(child, shows, depth + 1) : 0) return found;
     }
     return 0;
 }
 
-// a method of a script object's class or of one that extends: members +8 the class
+// a method of a script object's class or of one that extends
 inline uint32_t Method(X86Context& ctx, uint32_t object, const char* name) {
     for (int up = 0; up < 4; up++) {
         uint32_t members = Members(ctx, object);
         if (!members) break;
-        object = kernel::R32(members + 8);
+        object = kernel::R32(members + kMemberClass);
         if (uint32_t found = Find(Members(ctx, object), name)) return found;
     }
     return 0;
@@ -120,7 +180,8 @@ inline uint32_t Method(X86Context& ctx, uint32_t object, const char* name) {
 
 // a clip the page's script takes for one of its button objects, such as like
 inline bool Button(X86Context& ctx, uint32_t clip, uint32_t like) {
-    uint32_t frame = Member(ctx, like, "HighlightFrame"), on = Method(ctx, like, "HighLight");
+    uint32_t frame = Member(ctx, like, "HighlightFrame");
+    uint32_t on = Method(ctx, like, "HighLight");
     uint32_t off = Method(ctx, like, "UnHighLight");
     return frame && on && off && Set(ctx, clip, "movieClip", clip) && Set(ctx, clip, "HighlightFrame", frame) &&
            Set(ctx, clip, "HighLight", on) && Set(ctx, clip, "UnHighLight", off);

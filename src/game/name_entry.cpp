@@ -10,23 +10,16 @@
 
 #include "common/mouse_keyboard.h"
 #include "game/flash.h"
+#include "game/layout.h"
 #include "xdk/hle.h"
 
 using namespace kernel;
+using namespace layout;
 
 namespace {
 
-constexpr uint32_t kCall = 0x101420;     // eax object path; cdecl (function, result, count, texts...)
-constexpr uint32_t kGetText = 0x101720;  // eax path; cdecl (out): the value as text, no size limit
-constexpr uint32_t kSetText = 0x101790;  // cdecl (path, text): a string value
-constexpr uint32_t kPlayerReady = 0x2ED408;
-
-// front end: +0x374 a call to the game waits, the page script's FEFunctionTrigger, +0x381C 2 once the page is ready,
-// +0x3840 its name, +0x388C page leaving
-constexpr uint32_t kCallWaits = 0x374;
-constexpr uint32_t kPageReady = 0x381C;
-constexpr uint32_t kPageName = 0x3840;
-constexpr uint32_t kPageLeaving = 0x388C;
+constexpr uint32_t kGetVariableText = 0x101720;  // eax path; cdecl (out): the value as text, no size limit
+constexpr uint32_t kSetVariableText = 0x101790;  // cdecl (path, text): a string value
 
 constexpr char kPage[] = "VirtualKeyboard";
 constexpr char kSymbols[] = "()&_^%\\/@#[]$;:'\"<>?!-*+={},.";
@@ -45,13 +38,13 @@ std::string Get(X86Context& ctx, const char* name) {
     uint32_t out = g_texts + 2 * kTextSize;
     G<uint8_t>(out) = 0;
     ctx.eax = Put(0, std::string("_level4.") + name);
-    CallGuest(ctx, kGetText, {out});
+    CallGuest(ctx, kGetVariableText, {out});
     return static_cast<const char*>(HostPtr(out));
 }
 
 void Call(X86Context& ctx, const char* function) {
     ctx.eax = Put(0, "_level4");
-    CallGuest(ctx, kCall, {Put(1, function), 0, 0});
+    CallGuest(ctx, flash::kCall, {Put(1, function), 0, 0});
 }
 
 void Insert(X86Context& ctx, uint32_t ui, char c) {
@@ -60,7 +53,7 @@ void Insert(X86Context& ctx, uint32_t ui, char c) {
     if (name.size() >= size_t(std::atoi(Get(ctx, "stringMaxLength").c_str()))) return;
     size_t caret = std::min(size_t(std::max(std::atoi(Get(ctx, "stringIndex").c_str()), 0)), name.size());
     name.insert(caret, 1, c);
-    CallGuest(ctx, kSetText, {Put(0, "_level4.FINALRESULTSTRING"), Put(1, name)});
+    CallGuest(ctx, kSetVariableText, {Put(0, "_level4.FINALRESULTSTRING"), Put(1, name)});
     // the page steps stringIndex itself, a number; the game takes one call a tick and UpdateString sends the caret too
     Call(ctx, "CursorForward");
     W32(ui + kCallWaits, 0);
@@ -78,8 +71,8 @@ void Type(X86Context& ctx, uint32_t ui, char16_t c) {
 }
 
 bool OnPage(uint32_t ui) {
-    if (R32(kPlayerReady) != 1 || !R32(flash::kPlayer)) return false;
-    if (R32(ui + kPageReady) != 2 || R32(ui + kPageLeaving)) return false;
+    if (R32(flash::kPlayerReady) != 1 || !R32(flash::kPlayer)) return false;
+    if (R32(ui + kPageReady) != kPageRunning || R32(ui + kPageLeaving)) return false;
     return std::strcmp(static_cast<const char*>(HostPtr(ui + kPageName)), kPage) == 0;
 }
 

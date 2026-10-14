@@ -9,37 +9,43 @@
 #include "app/app.h"
 #include "common/aspect.h"
 #include "common/options.h"
+#include "game/layout.h"
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
 
 using namespace kernel;
+using namespace layout;
 
 namespace {
 
-constexpr uint32_t kDisplay = 0x2D67F4;  // +0 width, +0xC widescreen, +0xD428 width, +0xD4C0 view width, +0xD4C4 aspect
-constexpr uint32_t kUi = 0x2D199C;       // +0x3710 Flash stage to screen
 constexpr uint32_t kAnchors = 0x2AD968;  // x, y share of the safe area per anchor id
+constexpr uint32_t kAnchorSize = 8;
 constexpr uint32_t kTaller = 0x2AD9BC;   // frame height the game gives the middle anchors on a widescreen
-constexpr uint32_t kStageX = 0x295DA4;   // where the game puts the 640 Flash stage on a widescreen, 106.67
-constexpr uint32_t kFromHud = 0x13C02F, kFromFlash = 0x121E82, kFromHost = 0xFFFFFFF0;  // return addresses
+// return addresses
+constexpr uint32_t kFromHud = 0x13C02F;
+constexpr uint32_t kFromFlash = 0x121E82;
+constexpr uint32_t kFromHost = 0xFFFFFFF0;
 constexpr uint32_t kTitleFade = 0xD71A0;  // draw callback of the level title card's full screen rectangle
-constexpr float kOff = -1, kCentre = 0.5f;
+constexpr float kOff = -1;
+constexpr float kCentre = 0.5f;
 
-float g_anchor = kOff, g_width = 640;
+float g_anchor = kOff;
+float g_width = 640;
 uint32_t g_hud = 0;  // the player's HUD while its list draws
 float g_inset = 0;   // 640x480 pixels a sprite's uv is pulled in by at each edge
 
 // The game takes the screen's shape once at boot: its flag, the view and the Flash stage follow the output.
 // View width: the game's 1 on 4:3 and 1.2 on 16:9, past that the 16:9 height of view is kept
 void FollowOutput() {
-    uint32_t display = R32(kDisplay), ui = R32(kUi);
+    uint32_t display = R32(kDisplay);
+    uint32_t ui = R32(kUi);
     if (!display) return;
     float k = game::Narrow();
-    G<uint8_t>(display + 0xC) = game::Wide();
-    G<float>(display + 0xD4C0) = std::max(0.4f + 0.6f / k, 0.9f / k);
-    G<float>(display + 0xD4C4) = game::Aspect();
+    G<uint8_t>(display + kDisplayWidescreen) = game::Wide();
+    G<float>(display + kDisplayViewWidth) = std::max(0.4f + 0.6f / k, 0.9f / k);
+    G<float>(display + kDisplayAspect) = game::Aspect();
     G<float>(kStageX) = 320 * (1 / k - 1);
-    if (ui) G<float>(ui + 0x3710) = float(int32_t(R32(display + 0xD428))) / 640 * k;
+    if (ui) G<float>(ui + kStageScaleX) = float(int32_t(R32(display + kDisplayWidth))) / 640 * k;
 }
 
 // An emitter's points, eax: x, y pairs, each drawn at itself plus the offset at [esp+4]. Moved for the call, not
@@ -121,14 +127,6 @@ X86_EXTERN_FUNC(__imp__sub_000D6C00);
 
 namespace {
 
-// film table 0x29D9C0, 12 bytes an entry, +8 the film runs behind a menu; index at game +0x2042C
-constexpr uint32_t kGame = 0x2D45F0;
-constexpr uint32_t kCurrentFilm = 0x2042C;
-constexpr uint32_t kFilmTable = 0x29D9C0;
-constexpr uint32_t kFilmEntry = 12;
-constexpr uint32_t kFilmBehindMenu = 8;
-constexpr uint32_t kFilms = 27;
-
 enum class Film { None, Shown, Menu };
 Film g_film = Film::None;
 
@@ -187,7 +185,8 @@ X86_FUNC(sub_000D6850) {
 // Begin. Left alone: the Flash player's, the host's, a smaller target's
 X86_EXTERN_FUNC(__imp__sub_000D99A0);
 X86_FUNC(sub_000D99A0) {
-    uint32_t from = R32(ctx.esp), display = R32(kDisplay);
+    uint32_t from = R32(ctx.esp);
+    uint32_t display = R32(kDisplay);
     FollowOutput();
     __imp__sub_000D99A0(ctx, base);
     std::lock_guard<std::recursive_mutex> lock(d3d::Lock());
@@ -207,25 +206,35 @@ X86_FUNC(sub_000D3740) {
     __imp__sub_000D3740(ctx, base);
 }
 
-// List draw, ecx the list: a player's HUD holds its own at +0x40
+// HUD and its components
+constexpr uint32_t kHudList = 0x40;
+constexpr uint32_t kHudComponents = 0xA0;
+constexpr uint32_t kComponentFrame = 4;
+constexpr uint32_t kComponentNext = 8;
+constexpr uint32_t kComponentAnchor = 0x10;
+// list item and its frame
+constexpr uint32_t kItemFrame = 0x40;
+constexpr uint32_t kItemCallback = 0x44;
+constexpr uint32_t kFrameHeight = 0xC;
+
+// List draw, ecx the list
 X86_EXTERN_FUNC(__imp__sub_000DA4B0);
 X86_FUNC(sub_000DA4B0) {
     bool hud = R32(ctx.esp) == kFromHud;
-    g_hud = hud ? ctx.ecx - 0x40 : 0;
+    g_hud = hud ? ctx.ecx - kHudList : 0;
     __imp__sub_000DA4B0(ctx, base);
     g_hud = 0;
 }
 
-// A list's item before it draws, ebx: +0x40 its frame, +0x44 its callback. HUD +0xA0 components: +4 frame, +8 next,
-// +0x10 anchor id. Hidden, the HUD draws only the title card's fade: false skips the callback
+// A list's item before it draws, ebx. Hidden, the HUD draws only the title card's fade: false skips the callback
 bool HudItem(X86Context& ctx, uint8_t*) {
-    if (g_hud && game::g_hide_hud && R32(ctx.ebx + 0x44) != kTitleFade) return false;
-    uint32_t frame = R32(ctx.ebx + 0x40);
+    if (g_hud && game::g_hide_hud && R32(ctx.ebx + kItemCallback) != kTitleFade) return false;
+    uint32_t frame = R32(ctx.ebx + kItemFrame);
     float anchor = kCentre;
-    for (uint32_t c = g_hud ? R32(g_hud + 0xA0) : 0; c; c = R32(c + 8)) {
-        if (R32(c + 4) != frame) continue;
-        anchor = G<float>(kAnchors + R32(c + 0x10) * 8);
-        if (float& height = G<float>(frame + 0xC); height == G<float>(kTaller)) height = 1;
+    for (uint32_t c = g_hud ? R32(g_hud + kHudComponents) : 0; c; c = R32(c + kComponentNext)) {
+        if (R32(c + kComponentFrame) != frame) continue;
+        anchor = G<float>(kAnchors + R32(c + kComponentAnchor) * kAnchorSize);
+        if (float& height = G<float>(frame + kFrameHeight); height == G<float>(kTaller)) height = 1;
     }
     if (g_anchor != kOff) g_anchor = anchor;
     return true;
