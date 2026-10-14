@@ -48,5 +48,9 @@ bool Cursor(float& x, float& y, bool& down);
 int TakeWheel();               // wheel notches in the menus since the last call, up positive
 bool LeftButton();             // the left mouse button held in the game window
 void TapConfirm();             // a short press of A on the pad itself
+// a name being typed: the keys type (OnChar) and press nothing but the arrows and pause
+void SetTextEntry(bool on);   // game thread, each tick
+void OnChar(unsigned c);      // window thread, WM_CHAR
+std::u16string TakeChars();   // typed since the last call, Backspace as '\b', Enter as '\r'
 
 }  // namespace input

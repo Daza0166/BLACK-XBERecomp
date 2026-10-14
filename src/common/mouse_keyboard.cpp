@@ -9,6 +9,7 @@
 #include <iterator>
 #include <mutex>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -35,6 +36,9 @@ std::atomic<uint64_t> g_capture_ms{0};  // PressedKey
 std::atomic<bool> g_settle{false};
 std::atomic<uint64_t> g_confirm_until{0};
 std::atomic<bool> g_menu{false}, g_keyboard{true};
+std::atomic<bool> g_text{false};
+std::mutex g_chars_lock;
+std::u16string g_chars;  // typed, not yet taken
 std::atomic<int> g_wheel{0};
 constexpr uint64_t kPlayMs = 250, kTapMs = 80;
 constexpr uint64_t kCaptureMs = 250;  // PressedKey asked this recently: a key capture is up
@@ -333,6 +337,7 @@ void Keyboard(Pad& p) {
         int b = kActions[i].button;
         if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), pressed)) continue;
         used = true;
+        if (g_text && b != kStart) continue;
         if (b == kWalk) walk = true;
         else if (b >= 20 && !play) continue;
         else if (b >= 16) stick[b - 16] = 1;
@@ -346,10 +351,10 @@ void Keyboard(Pad& p) {
         } else p.buttons |= uint16_t(1u << (b - 8));
     }
     pause_held = pause;
-    // Enter, Space and Backspace act in menus only; in play they do what they are bound to
-    bool confirm = !play && (Down(VK_RETURN) || Down(VK_SPACE));
+    // Enter, Space and Backspace act in menus only; in play they do what they are bound to, in a name they type
+    bool confirm = !play && !g_text && (Down(VK_RETURN) || Down(VK_SPACE));
     if (confirm || NowMs() < g_confirm_until) p.analog[0] = 0xFF;
-    if ((!play && Down(VK_BACK)) || (g_menu && Down(VK_RBUTTON))) p.analog[1] = 0xFF;
+    if ((!play && !g_text && Down(VK_BACK)) || (g_menu && Down(VK_RBUTTON))) p.analog[1] = 0xFF;
     if (!play)
         for (int i = 0; i < 4; i++) p.buttons |= uint16_t(Down(kFixed[i]) << i);
     float speed = walk ? float(game::Opt().walk_speed) / 100.0f : 1.0f;
@@ -394,6 +399,23 @@ int TakeWheel() { return g_wheel.exchange(0); }
 bool LeftButton() { return Active() && !g_settle && Down(VK_LBUTTON); }
 
 void TapConfirm() { g_confirm_until = NowMs() + kTapMs; }
+
+void SetTextEntry(bool on) {
+    if (g_text.exchange(on) == on) return;
+    std::lock_guard lock(g_chars_lock);
+    g_chars.clear();
+}
+
+void OnChar(unsigned c) {
+    if (!g_text || !Active() || c > 0xFFFF) return;
+    std::lock_guard lock(g_chars_lock);
+    if (g_chars.size() < 64) g_chars += char16_t(c);
+}
+
+std::u16string TakeChars() {
+    std::lock_guard lock(g_chars_lock);
+    return std::exchange(g_chars, {});
+}
 
 const Action* Actions(size_t* count) {
     static const auto list = [] {

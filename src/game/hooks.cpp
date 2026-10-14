@@ -461,6 +461,13 @@ void DrawListRoom(X86Context&, uint8_t*) {
 // reload animations start the screen blur
 bool ReloadBlur(X86Context&, uint8_t*) { return game::Opt().reload_blur; }
 
+// the blur holds for the animation's frames times the last frame's time: frames of the game's frame rate instead
+constexpr uint32_t kAnimationFrames = 0x1C;
+void ReloadBlurHold(X86Context& ctx, uint8_t*) {
+    float frames = G<float>(ctx.ecx + kAnimationFrames);
+    ctx.xmm[0].f[0] = frames * G<float>(0x2F3A38);
+}
+
 // A or Start on any pad, or the left mouse button, on the press
 static bool SkipPressed() {
     static bool held = true;

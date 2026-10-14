@@ -56,6 +56,9 @@ bool Message(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* resu
                 return true;
             }
             break;
+        case WM_CHAR:
+            input::OnChar(unsigned(wp));
+            break;
         case WM_INPUT:
             input::OnRawInput(reinterpret_cast<void*>(lp));
             break;

@@ -418,6 +418,10 @@ call = "ReloadBlur"
 on_false = 0x17B3AA
 
 [[hook]]
+at = 0x17B31C
+call = "ReloadBlurHold"
+
+[[hook]]
 at = 0x1C5655
 call = "CharacterDetail"
 
@@ -530,6 +534,10 @@ call = "MenuPrompts"
 [[hook]]
 at = 0x124374
 call = "OptionsMenu"
+
+[[hook]]
+at = 0x12437B
+call = "NameEntry"
 
 # src/d3d/d3d8.cpp
 [[hook]]
