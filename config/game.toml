@@ -540,6 +540,11 @@ call = "OptionsMenu"
 at = 0x124374
 call = "ExitMenu"
 
+# src/game/exit_menu.cpp, a page loaded, before its Prepare
+[[hook]]
+at = 0x12466D
+call = "ExitMenuSounds"
+
 [[hook]]
 at = 0x12437B
 call = "NameEntry"

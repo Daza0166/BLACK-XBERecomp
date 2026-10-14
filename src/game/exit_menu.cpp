@@ -1,7 +1,9 @@
 // Quit on the main menu, as the SCDA recomp has: a QUIT button under the title menu's own opens the game's
 // ConfirmWarning page with its unused "are you sure you want to quit?" text. Yes closes the window, No goes back.
-// Back on the title menu, which did nothing on the console, opens the same page.
+// Back on the title menu, which did nothing on the console, opens the same page. The page is the pause menu's and
+// imports its sounds from PAudio, so on the front end its sound clips take the title menu's FEAudio ones.
 #include <cstring>
+#include <iterator>
 #include <string>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -52,12 +54,23 @@ constexpr uint32_t kLookup = 0x1F3A80;   // thiscall strings (string id): UTF-8 
 constexpr uint32_t kQuitId = 0x4A8272D7;         // FE_QUIT
 constexpr uint32_t kQuitQuestionId = 0x50756353;  // "are you sure you want to quit?"
 
-// clip: +0x1C x, +0x20 y, +0x24 its colours, +0x48 its data; data +0x1C flags
+// clip: +0x1C x, +0x20 y, +0x24 its colours, +0x48 its data; data +0x0C its character, +0x1C flags
 constexpr uint32_t kClipX = 0x1C;
 constexpr uint32_t kClipY = 0x20;
 constexpr uint32_t kClipColours = 0x24;
 constexpr uint32_t kColoursSize = 0x20;
 constexpr uint32_t kClipData = 0x48;
+constexpr uint32_t kDataCharacter = 0x0C;  // read on every frame the clip plays (0x10E3B0)
+
+// character +0x04 its movie; movie +0x28 import count, +0x2C imports of 0x10 {path, name, character, loaded movie}.
+// A loaded movie +0 counts the imports holding it; at none it is freed and its characters unrelocated (0xFC360).
+constexpr uint32_t kCharacterMovie = 0x04;
+constexpr uint32_t kImportCount = 0x28;
+constexpr uint32_t kImports = 0x2C;
+constexpr uint32_t kImportSize = 0x10;
+constexpr uint32_t kImportName = 0x04;
+constexpr uint32_t kImportLoaded = 0x0C;
+constexpr uint32_t kMaxImports = 256;
 constexpr uint32_t kDataFlags = 0x1C;
 constexpr uint32_t kPlaying = 0x2000000;
 constexpr uint32_t kSprite = 0xD;
@@ -74,17 +87,25 @@ struct TitleMenu {
     const char* first;      // the ring's first and last button objects
     const char* last;
 };
-// longest name first, they are compared by prefix
+// as the game loads them (0x1F8BF2, 0x1F8C04); longest name first, they are compared by prefix
 constexpr TitleMenu kTitleMenus[] = {
-    {"BlackTitleMenu2", "options_text", "startButton", "optionsButton"},
-    {"BlackTitleMenu", "operatorprofile_text", "continueButton", "profileButton"},
+    {"blacktitlemenu2", "options_text", "startButton", "optionsButton"},
+    {"blacktitlemenu", "operatorprofile_text", "continueButton", "profileButton"},
 };
+
+// the root sound clips every page script plays
+constexpr const char* kSoundClips[] = {"SNDBack", "SNDChange", "SNDClose", "SNDError", "SNDOpen", "SNDSelect"};
+constexpr size_t kSounds = std::size(kSoundClips);
 
 const TitleMenu* g_return = &kTitleMenus[1];  // the title menu No goes back to
 bool g_confirm_ready = false;  // the page's No and back lead there
 bool g_quitting = false;
+bool g_reported = false;  // a failure is logged once
+uint32_t g_title_sounds[kSounds] = {};  // the characters of the title menu's sound clips
+uint32_t g_held_audio = 0;  // FEAudio, held loaded while ConfirmWarning plays its clips
 
-bool HasPrefix(const char* text, const char* prefix) { return std::strncmp(text, prefix, std::strlen(prefix)) == 0; }
+// page names differ in case between the game and the scripts
+bool HasPrefix(const char* text, const char* prefix) { return _strnicmp(text, prefix, std::strlen(prefix)) == 0; }
 
 const TitleMenu* FindTitleMenu(const char* page) {
     for (const TitleMenu& menu : kTitleMenus)
@@ -141,33 +162,98 @@ bool JoinRing(X86Context& ctx, const TitleMenu& title, uint32_t root, uint32_t b
     return flash::Set(ctx, menu, "mstrPageBack", flash::String(ctx, kConfirmPage));
 }
 
-bool AddButton(X86Context& ctx, const TitleMenu& title, uint32_t root, uint32_t holder, uint32_t lead) {
+// the step that failed, null once the button is in
+const char* AddButton(X86Context& ctx, const TitleMenu& title, uint32_t root, uint32_t holder, uint32_t lead) {
     uint32_t button = CopyButton(ctx, title, holder);
-    uint32_t field = button ? flash::FindField(button, nullptr) : 0;
-    if (!field || !flash::Set(ctx, field, "variable", flash::String(ctx, kQuitText))) return false;
+    if (!button) return "copy";
+    uint32_t field = flash::FindField(button, nullptr);
+    if (!field || !flash::Set(ctx, field, "variable", flash::String(ctx, kQuitText))) return "label";
     Follow(button, lead);
     CallGuest(ctx, flash::kRunActions, {R32(flash::kPlayer)});
-    return JoinRing(ctx, title, root, button);
+    return JoinRing(ctx, title, root, button) ? nullptr : "ring";
+}
+
+void ReportOnce(const char* page, const char* what) {
+    if (g_reported) return;
+    g_reported = true;
+    LOGE("quit: %s, %s failed", page, what);
 }
 
 void UpdateButton(X86Context& ctx, uint32_t ui, const TitleMenu& title, uint32_t root) {
     uint32_t holder = Member(ctx, Member(ctx, root, "Main"), "TextAnim");
     uint32_t lead = Member(ctx, holder, title.last_clip);
+    // none until Main places TextAnim
     if (!flash::IsClip(lead)) return;
     if (uint32_t button = Member(ctx, holder, kButtonName)) {
         Follow(button, lead);
-    } else if (!R32(ui + kPageLeaving) && R32(ui + kPageAsked) != 1) {
-        bool added = AddButton(ctx, title, root, holder, lead);
-        LOGI("quit: %s %s", title.page, added ? "button added" : "button failed");
+        return;
+    }
+    if (R32(ui + kPageLeaving) || R32(ui + kPageAsked) == 1) return;
+    const char* failed = AddButton(ctx, title, root, holder, lead);
+    if (failed) {
+        ReportOnce(title.page, failed);
+    } else {
+        LOGI("quit: button added to %s", title.page);
+    }
+}
+
+uint32_t ClipCharacter(X86Context& ctx, uint32_t root, const char* name) {
+    uint32_t clip = Member(ctx, root, name);
+    if (flash::Type(clip) != kSprite) return 0;
+    return R32(R32(clip + kClipData) + kDataCharacter);
+}
+
+// the loaded FEAudio the title movie's sound clips are imported from, found through its Main clip's character
+uint32_t TitleAudio(X86Context& ctx, uint32_t root) {
+    uint32_t main = ClipCharacter(ctx, root, "Main");
+    uint32_t movie = main ? R32(main + kCharacterMovie) : 0;
+    uint32_t count = movie ? R32(movie + kImportCount) : 0;
+    for (uint32_t i = 0; i < count && i < kMaxImports; i++) {
+        uint32_t entry = R32(movie + kImports) + i * kImportSize;
+        const char* name = static_cast<const char*>(HostPtr(R32(entry + kImportName)));
+        if (_stricmp(name, kSoundClips[0]) == 0) return R32(entry + kImportLoaded);
+    }
+    return 0;
+}
+
+// one more import's hold keeps FEAudio loaded after the title movie lets go of it
+void LatchTitleSounds(X86Context& ctx, uint32_t root) {
+    for (size_t i = 0; i < kSounds; i++) g_title_sounds[i] = ClipCharacter(ctx, root, kSoundClips[i]);
+    if (g_held_audio) return;
+    g_held_audio = TitleAudio(ctx, root);
+    if (g_held_audio) W32(g_held_audio, R32(g_held_audio) + 1);
+}
+
+// back on a title menu, which holds FEAudio again, so ours never frees it
+void ReleaseTitleAudio() {
+    if (!g_held_audio || R32(g_held_audio) < 2) return;
+    W32(g_held_audio, R32(g_held_audio) - 1);
+    g_held_audio = 0;
+}
+
+// only the front end page's own clips change, the pause menu's ConfirmWarning makes new ones with PAudio's
+void ApplyTitleSounds(X86Context& ctx, uint32_t root) {
+    if (!g_held_audio) {
+        ReportOnce(kConfirmPage, "FEAudio");
+        return;
+    }
+    for (size_t i = 0; i < kSounds; i++) {
+        uint32_t clip = Member(ctx, root, kSoundClips[i]);
+        if (flash::Type(clip) != kSprite || !g_title_sounds[i]) {
+            ReportOnce(kConfirmPage, kSoundClips[i]);
+            continue;
+        }
+        W32(R32(clip + kClipData) + kDataCharacter, g_title_sounds[i]);
     }
 }
 
 // as the question is asked, before the page loads and reads its text
-void ApplyQuestion(X86Context& ctx, uint32_t ui, const TitleMenu& title) {
+void ApplyQuestion(X86Context& ctx, uint32_t ui, const TitleMenu& title, uint32_t root) {
     const char* target = static_cast<const char*>(HostPtr(ui + kTargetPage));
     if (R32(ui + kPageAsked) != 1 || !HasPrefix(target, kConfirmPage)) return;
     SetConfirmText(ctx, kConfirmTitle, kQuitId);
     SetConfirmText(ctx, kConfirmMessage, kQuitQuestionId);
+    LatchTitleSounds(ctx, root);
     g_return = &title;
 }
 
@@ -203,8 +289,9 @@ void Tick(X86Context& ctx, uint32_t ui) {
     uint32_t root = flash::Level(4);
     if (!root) return;
     if (const TitleMenu* title = FindTitleMenu(page)) {
+        ReleaseTitleAudio();
         UpdateButton(ctx, ui, *title, root);
-        ApplyQuestion(ctx, ui, *title);
+        ApplyQuestion(ctx, ui, *title, root);
     }
     if (confirm) UpdateConfirm(ctx, ui, root);
 }
@@ -215,5 +302,14 @@ void Tick(X86Context& ctx, uint32_t ui) {
 void ExitMenu(X86Context& ctx, uint8_t*) {
     X86Context saved = ctx;
     Tick(ctx, ctx.ebp);
+    ctx = saved;
+}
+
+// ebp the front end, a page just loaded and its Prepare, which plays SNDOpen, not yet called
+void ExitMenuSounds(X86Context& ctx, uint8_t*) {
+    X86Context saved = ctx;
+    const char* page = static_cast<const char*>(HostPtr(ctx.ebp + kPageName));
+    uint32_t root = flash::Level(4);
+    if (root && HasPrefix(page, kConfirmPage) && InFrontEnd()) ApplyTitleSounds(ctx, root);
     ctx = saved;
 }
