@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
-#include <map>
 #include <string>
 #include <vector>
 
@@ -19,18 +18,21 @@
 
 using namespace kernel;
 using app::rows::Row;
+using flash::Button;
 using flash::Find;
+using flash::FindField;
+using flash::Focus;
+using flash::Link;
 using flash::Member;
 using flash::Members;
+using flash::Method;
+using flash::Set;
+using flash::String;
+using flash::Text;
 
 namespace {
 
-constexpr uint32_t kInterpreter = 0x562C08, kPlayerReady = 0x2ED408, kHashTable = 0x2AC908;
-constexpr uint32_t kSetMember = 0x100DB0;   // eax value or 0 to delete, edx name, ecx 0; (interpreter, object, 1, 0, 1)
-constexpr uint32_t kNewString = 0xF5600;    // cdecl (text): a string value
-constexpr uint32_t kCall = 0x101420;        // eax object path; cdecl (function, result, count, texts...)
-constexpr uint32_t kCallValues = 0x101260;  // the same, its arguments values
-constexpr uint32_t kRunActions = 0x10F180;  // (player): the frame actions waiting, a new clip's stop() among them
+constexpr uint32_t kPlayerReady = 0x2ED408, kHashTable = 0x2AC908;
 const char* const kCaptions[] = {"RECOMP SETTINGS", "MOUSE AND KEYBOARD"};
 constexpr int kEntries = int(std::size(kCaptions)), kSlots = 8, kDepth = 100;
 constexpr int kEscape = 0x1B;
@@ -110,49 +112,11 @@ Page g_page;     // game thread
 int g_next = 0;  // the mode of the page being loaded
 int g_last = 0;  // the mode before it, whose button takes the focus back
 
-// a name the player may keep: +0 its handle, +4 uses, length, room and hash, +12 the text
-uint32_t Name(const char* text) {
-    static std::map<std::string, uint32_t> names;
-    uint32_t& at = names[text];
-    if (!at) {
-        uint32_t length = uint32_t(std::strlen(text));
-        at = mem::AllocSystem(length + 13);
-        W32(at, at + 4);
-        G<uint16_t>(at + 4) = 0x4000;
-        G<uint16_t>(at + 6) = G<uint16_t>(at + 8) = uint16_t(length);
-        G<uint16_t>(at + 10) = 0;
-        std::memcpy(HostPtr(at + 12), text, length + 1);
-    }
-    return at;
-}
-
-uint32_t Text(const char* text) { return Name(text) + 12; }
-
-uint32_t String(X86Context& ctx, const char* text) { return CallGuest(ctx, kNewString, {Text(text)}); }
-
-bool Set(X86Context& ctx, uint32_t object, const char* name, uint32_t value) {
-    ctx.eax = value;
-    ctx.edx = Name(name);
-    ctx.ecx = 0;
-    return CallGuest(ctx, kSetMember, {kInterpreter, object, 1, 0, 1}) & 0xFF;
-}
-
 // the id of a string by its name
 uint32_t Hash(const char* text) {
     uint32_t h = ~0u;
     for (; *text; text++) h = uint32_t(int32_t(h) >> 8) ^ R32(kHashTable + ((h ^ uint8_t(*text)) & 0xFF) * 4);
     return h;
-}
-
-// a text field in a clip, the one showing that string or the first: data +0x1C its string's name
-uint32_t FindField(uint32_t clip, const char* shows, int depth = 0) {
-    int left = 256;
-    for (uint32_t child = flash::FirstChild(clip); child && left; child = R32(child + 0x50), left--) {
-        uint32_t data = flash::Type(child) == 0xF ? R32(child + 0x48) : 0;
-        if (data && (!shows || std::strcmp(static_cast<const char*>(HostPtr(R32(data + 0x1C) + 8)), shows) == 0)) return child;
-        if (uint32_t found = depth < 4 ? FindField(child, shows, depth + 1) : 0) return found;
-    }
-    return 0;
 }
 
 // that field shows field n from now on
@@ -185,7 +149,7 @@ uint32_t Copy(X86Context& ctx, uint32_t holder, const char* name, int depth) {
     char number[12];
     std::snprintf(number, sizeof(number), "%d", depth);
     ctx.eax = Text(g_page.host->button);
-    CallGuest(ctx, kCall, {Text("duplicateMovieClip"), 0, 2, Text(name), Text(number)});
+    CallGuest(ctx, flash::kCall, {Text("duplicateMovieClip"), 0, 2, Text(name), Text(number)});
     uint32_t clip = Member(ctx, holder, name);
     if (flash::Type(clip) != 0xD) return 0;
     uint32_t data = R32(clip + 0x48);
@@ -214,38 +178,9 @@ void Follow(const Page& p) {
     }
 }
 
-// a method of a script object's class or of one that extends: members +8 the class
-uint32_t Method(X86Context& ctx, uint32_t object, const char* name) {
-    for (int up = 0; up < 4; up++) {
-        uint32_t members = Members(ctx, object);
-        if (!members) break;
-        object = R32(members + 8);
-        if (uint32_t found = Find(Members(ctx, object), name)) return found;
-    }
-    return 0;
-}
-
-// a clip the page's script takes for one of its button objects, such as like
-bool Button(X86Context& ctx, uint32_t clip, uint32_t like) {
-    uint32_t frame = Member(ctx, like, "HighlightFrame"), on = Method(ctx, like, "HighLight");
-    uint32_t off = Method(ctx, like, "UnHighLight");
-    return frame && on && off && Set(ctx, clip, "movieClip", clip) && Set(ctx, clip, "HighlightFrame", frame) &&
-           Set(ctx, clip, "HighLight", on) && Set(ctx, clip, "UnHighLight", off);
-}
-
-void Link(X86Context& ctx, uint32_t above, uint32_t below) {
-    Set(ctx, above, "buttonDown", below);
-    Set(ctx, below, "buttonUp", above);
-}
-
-void Focus(X86Context& ctx, uint32_t button) {
-    ctx.eax = Text("_level4.MyMenu");
-    CallGuest(ctx, kCallValues, {Text("SetFocusButton"), 0, 1, button});
-}
-
 void Sound(X86Context& ctx) {
     ctx.eax = Text("_level4.MyMenu");
-    CallGuest(ctx, kCall, {Text("PlayChangeSound"), 0, 0});
+    CallGuest(ctx, flash::kCall, {Text("PlayChangeSound"), 0, 0});
 }
 
 // our buttons under the stock ones, in their ring
@@ -263,7 +198,7 @@ bool Entries(X86Context& ctx, uint32_t root, uint32_t holder) {
     }
     p.first = p.entry[0];
     Follow(p);
-    CallGuest(ctx, kRunActions, {R32(flash::kPlayer)});
+    CallGuest(ctx, flash::kRunActions, {R32(flash::kPlayer)});
     for (int i = 0; i < h.entries; i++) {
         if (!Button(ctx, p.entry[i], top) || !Set(ctx, p.entry[i], "actionSelectPage", String(ctx, h.page))) return false;
         Link(ctx, above, p.entry[i]);
@@ -310,7 +245,7 @@ bool Rows(X86Context& ctx, uint32_t root, uint32_t holder, uint32_t menu) {
     }
     p.first = p.name[0];
     Follow(p);
-    CallGuest(ctx, kRunActions, {R32(flash::kPlayer)});
+    CallGuest(ctx, flash::kRunActions, {R32(flash::kPlayer)});
     for (size_t i = 0; i < p.slots; i++) {
         // a confirm on a button with no action is a back
         if (!Button(ctx, p.name[i], like) || !Set(ctx, p.name[i], "actionSelectFunction", nothing)) return false;
