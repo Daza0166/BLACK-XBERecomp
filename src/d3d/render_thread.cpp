@@ -36,7 +36,8 @@ namespace {
 constexpr uint32_t kBatchCommands = 64;
 
 // resource headers the render thread reads: common, data, lock, format, size
-constexpr uint32_t kHeaderBytes = 20, kHeaderSlot = 32;
+constexpr uint32_t kHeaderBytes = 20;
+constexpr uint32_t kHeaderSlot = 32;
 constexpr uint32_t kHeaderRing = 1u << 20;  // guest memory for header copies; a copy is renewed after half a ring
 
 enum class WaitFor : uint8_t { ReadBack, Resource, Fence, Flush, Copy, Frame, Count };
@@ -45,11 +46,19 @@ enum class Op : uint8_t { State, Draw, Clear, Copy, Present, Sync, RecordLate, F
 
 struct Cmd {
     Op op;
-    uint32_t a = 0, b = 0, c = 0, d = 0;
+    uint32_t a = 0;
+    uint32_t b = 0;
+    uint32_t c = 0;
+    uint32_t d = 0;
     float f = 0;
-    uint32_t data = 0, size = 0;  // bytes in Batch::bytes
-    int32_t vs = -1, ps = -1;     // index in Batch::vs / ps: the shader changed
-    Surface s1, s2;
+    // data and size: bytes in Batch::bytes
+    uint32_t data = 0;
+    uint32_t size = 0;
+    // index in Batch::vs / ps: the shader changed
+    int32_t vs = -1;
+    int32_t ps = -1;
+    Surface s1;
+    Surface s2;
 };
 
 struct Batch {
@@ -64,9 +73,12 @@ struct Batch {
 // view, projection, texture and world are drawn with, of the simple render states only those src/d3d/d3d12.cpp and
 // MakePixelKey read: alpha test to depth offset, the combiner constants and the final combiner constants
 struct Range {
-    size_t off, len;
+    size_t off;
+    size_t len;
 };
-size_t At(const State& s, const void* p) { return size_t(static_cast<const uint8_t*>(p) - reinterpret_cast<const uint8_t*>(&s)); }
+size_t At(const State& s, const void* p) {
+    return size_t(static_cast<const uint8_t*>(p) - reinterpret_cast<const uint8_t*>(&s));
+}
 // bytes of the simple render states from method first to method last
 size_t SimpleBytes(uint32_t first, uint32_t last) { return size_t(last - first) + sizeof(uint32_t); }
 std::vector<Range> StateRanges() {
@@ -111,7 +123,9 @@ bool SamePiece(const uint8_t* a, const uint8_t* b) {
 }
 
 using Clock = std::chrono::steady_clock;
-uint64_t Ns(Clock::time_point t) { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t).count()); }
+uint64_t Ns(Clock::time_point t) {
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t).count());
+}
 
 class Threaded final : public Backend {
 public:
@@ -155,7 +169,8 @@ public:
         g_perf_capture_ns += Ns(t);
     }
 
-    void Clear(const State& s, uint32_t count, const uint8_t* rects, uint32_t flags, uint32_t color, float z, uint32_t stencil) override {
+    void Clear(const State& s, uint32_t count, const uint8_t* rects, uint32_t flags, uint32_t color, float z,
+               uint32_t stencil) override {
         auto t = Clock::now();
         SendState(s);
         Cmd c{Op::Clear};
@@ -176,7 +191,8 @@ public:
     }
 
     // rects and points are taken now; the copy itself, CPU or GPU, runs in order like the console's
-    void Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects, uint32_t dst_points) override {
+    void Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects,
+              uint32_t dst_points) override {
         auto t = Clock::now();
         Cmd c{Op::Copy};
         c.a = count;
@@ -211,7 +227,9 @@ public:
 
     void SyncLate(uint32_t data) override {
         if (!inner_->DeliverLate(data)) {
-            if (diag::Perf()) LOG_FIRST(16, "render thread: no finished copy of %08X for a NOOVERWRITE lock, reading it back now", data);
+            if (diag::Perf()) {
+                LOG_FIRST(16, "render thread: no finished copy of %08X for a NOOVERWRITE lock, reading it back now", data);
+            }
             written_.insert(data);
             ReadBack(data, true);
         }
@@ -277,8 +295,10 @@ private:
         // only surfaces the GPU wrote since the last read-back hold anything newer than guest memory
         if (!written_.erase(data)) return;
         (late ? g_perf_sync_late : g_perf_sync_block)++;
-        if (diag::Perf() && logged_.insert(uint64_t(data) << 1 | (late ? 1 : 0)).second)
-            LOGI("render thread: read-back of %08X for %s", data, late ? "a NOOVERWRITE lock without a finished copy" : "a lock / BlockOnResource");
+        if (diag::Perf() && logged_.insert(uint64_t(data) << 1 | (late ? 1 : 0)).second) {
+            const char* why = late ? "a NOOVERWRITE lock without a finished copy" : "a lock / BlockOnResource";
+            LOGI("render thread: read-back of %08X for %s", data, why);
+        }
         Cmd c{Op::Sync};
         c.a = data;
         cur_->cmds.push_back(c);
@@ -351,7 +371,8 @@ private:
         auto streams = s.streams;
         for (auto& st : streams) st.vb = Header(st.vb);
         Delta(&sent_.streams, &streams, sizeof(streams));
-        Surface rt = s.rt, zs = s.zs;
+        Surface rt = s.rt;
+        Surface zs = s.zs;
         rt.header = Header(rt.header);
         zs.header = Header(zs.header);
         Delta(&sent_.rt, &rt, sizeof(rt));
@@ -496,21 +517,26 @@ private:
     std::unordered_map<uint32_t, uint64_t> last_use_;
     std::unordered_set<uint32_t> written_;  // surfaces drawn since their last read-back, by data address
     std::unordered_set<uint64_t> logged_;   // perf diagnostic: read-backs named once, by address and kind
-    uint64_t next_id_ = 0, last_present_ = 0;
+    uint64_t next_id_ = 0;
+    uint64_t last_present_ = 0;
 
     // the render thread
     State state_;
 
     std::mutex m_;
-    std::condition_variable cv_, done_cv_;
+    std::condition_variable cv_;
+    std::condition_variable done_cv_;
     std::deque<Batch*> queue_;
     std::vector<Batch*> free_;
     std::atomic<uint64_t> done_{0};
-    bool stop_ = false, exited_ = false;
+    bool stop_ = false;
+    bool exited_ = false;
 };
 
 }  // namespace
 
-std::unique_ptr<Backend> CreateThreadedBackend(std::unique_ptr<Backend> inner) { return std::make_unique<Threaded>(std::move(inner)); }
+std::unique_ptr<Backend> CreateThreadedBackend(std::unique_ptr<Backend> inner) {
+    return std::make_unique<Threaded>(std::move(inner));
+}
 
 }  // namespace gpu
