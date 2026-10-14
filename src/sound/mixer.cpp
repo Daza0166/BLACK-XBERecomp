@@ -33,17 +33,28 @@ void DecodeBlock(const uint8_t* b, int ch, int16_t* out) {
     }
 }
 
+// The decoded ADPCM block at guest address at. A frame between two blocks reads both, so the one before stays too.
+const int16_t* DecodedBlock(Voice& v, int64_t at) {
+    if (at == v.block) return v.decoded[v.slot];
+    int64_t before = v.block_decoded_now ? v.block : -1;
+    if (at != v.spare_block) {
+        int16_t* into = v.decoded[v.slot ^ 1];
+        DecodeBlock(static_cast<const uint8_t*>(HostPtr(uint32_t(at))), std::min<int>(v.channels, 8), into);
+    }
+    v.spare_block = before;
+    v.block = at;
+    v.slot ^= 1;
+    v.block_decoded_now = true;
+    return v.decoded[v.slot];
+}
+
 // sample of channel c at frame f of memory starting at data
 float Sample(Voice& v, uint32_t data, uint32_t f, int c) {
     c = std::min<int>(c, v.channels - 1);
     const uint8_t* p = static_cast<const uint8_t*>(HostPtr(data));
     if (v.tag == 0x69) {
         int64_t at = int64_t(data) + int64_t(f / 64) * 36 * v.channels;
-        if (at != v.block) {
-            DecodeBlock(static_cast<const uint8_t*>(HostPtr(uint32_t(at))), std::min<int>(v.channels, 8), v.decoded);
-            v.block = at;
-        }
-        return v.decoded[(f % 64) * v.channels + c] / 32768.0f;
+        return DecodedBlock(v, at)[(f % 64) * v.channels + c] / 32768.0f;
     }
     if (v.bits == 8) return (p[f * v.align + c] - 128) / 128.0f;
     int16_t s;
@@ -225,11 +236,45 @@ Gains UpdateRamp(Voice& v, const Gains& g, uint32_t frames) {
     return step;
 }
 
-// the next frame's levels, a step along the ramp
-void StepGains(Gains& gain, const Gains& step) {
+// a row's level on one output or on the reverb send, ramped across the block
+struct Lane {
+    uint32_t row;
+    uint32_t out;
+    float gain;
+    float step;
+};
+
+// The levels a block can hear. A level that is zero at both ends of its ramp only ever adds zero to a mix that
+// starts at +0, so leaving it out changes no bit.
+struct Lanes {
+    Lane out[kRows * kOuts];
+    uint32_t outs = 0;
+    Lane send[kRows];
+    uint32_t sends = 0;
+};
+
+Lanes AudibleLanes(const Gains& from, const Gains& step) {
+    Lanes l;
     for (uint32_t r = 0; r < kRows; r++) {
-        for (uint32_t o = 0; o < kOuts; o++) gain.out[r][o] += step.out[r][o];
-        gain.send[r] += step.send[r];
+        for (uint32_t o = 0; o < kOuts; o++) {
+            if (from.out[r][o] != 0 || step.out[r][o] != 0) l.out[l.outs++] = {r, o, from.out[r][o], step.out[r][o]};
+        }
+        if (from.send[r] != 0 || step.send[r] != 0) l.send[l.sends++] = {r, 0, from.send[r], step.send[r]};
+    }
+    return l;
+}
+
+// one frame of the voice's rows into the mix, each level a step further along its ramp
+void MixFrame(Lanes& l, const float s[kRows], float* frame, float& send) {
+    for (uint32_t k = 0; k < l.outs; k++) {
+        Lane& a = l.out[k];
+        a.gain += a.step;
+        frame[a.out] += s[a.row] * a.gain;
+    }
+    for (uint32_t k = 0; k < l.sends; k++) {
+        Lane& a = l.send[k];
+        a.gain += a.step;
+        send += s[a.row] * a.gain;
     }
 }
 
@@ -266,21 +311,36 @@ bool StreamFrame(Voice& v, float s[2]) {
     }
     Packet& pk = v.packets.front();
     float t = float(v.pos - f);
-    for (int c = 0; c < 2; c++) {
+    int channels = std::min<int>(v.channels, 2);
+    for (int c = 0; c < channels; c++) {
         float now = Sample(v, pk.data, f, c);
         float next = now;
         if (f + 1 < FramesOf(v, pk.size)) next = Sample(v, pk.data, f + 1, c);
         else if (v.packets.size() > 1) next = Sample(v, v.packets[1].data, 0, c);
         s[c] = now + (next - now) * t;
     }
+    if (channels == 1) s[1] = s[0];  // a mono voice reads its one channel as both
     return true;
 }
 
+// a buffer's frames it plays to, or loops between; the mix holds the lock, so they stay for the block
+struct Region {
+    uint32_t start;
+    uint32_t end;
+};
+
+Region RegionOf(const Voice& v) {
+    Region at;
+    at.start = v.looping ? FramesOf(v, v.loop_start) : 0;
+    at.end = FramesOf(v, v.looping ? v.loop_start + v.loop_len : v.play_len);
+    return at;
+}
+
 // The buffer's two channels at its position, looping or stopping at the end of its region; false once stopped.
-bool BufferFrame(Voice& v, float s[2]) {
+bool BufferFrame(Voice& v, const Region& region, float s[2]) {
     uint32_t f = uint32_t(v.pos);
-    uint32_t start = v.looping ? FramesOf(v, v.loop_start) : 0;
-    uint32_t end = FramesOf(v, v.looping ? v.loop_start + v.loop_len : v.play_len);
+    uint32_t start = region.start;
+    uint32_t end = region.end;
     if (f >= end) {
         if (!v.looping || end <= start) {
             v.playing = false;
@@ -294,10 +354,12 @@ bool BufferFrame(Voice& v, float s[2]) {
     uint32_t base = v.data + v.play_start;
     uint32_t next = f + 1 < end ? f + 1 : v.looping ? start : f;
     float t = float(v.pos - f);
-    for (int c = 0; c < 2; c++) {
+    int channels = std::min<int>(v.channels, 2);
+    for (int c = 0; c < channels; c++) {
         float now = Sample(v, base, f, c);
         s[c] = now + (Sample(v, base, next, c) - now) * t;
     }
+    if (channels == 1) s[1] = s[0];  // a mono voice reads its one channel as both
     return true;
 }
 
@@ -310,10 +372,16 @@ void MixVoice(Voice& v, float* out, float* send, uint32_t frames) {
     if (!v.has_gain) v.itd = itd;
     float itd_step = (itd - v.itd) / float(frames);
     Gains dg = UpdateRamp(v, g, frames);
+    Lanes lanes = AudibleLanes(v.gain, dg);
+    Region region = RegionOf(v);
     double step = double(v.freq ? v.freq : v.rate) / audio::kRate;
+    // the game may have rewritten sample memory since the last block: a block left behind is decoded again
+    v.spare_block = -1;
+    v.block_decoded_now = false;
     for (uint32_t i = 0; i < frames; i++) {
         float s[kRows];
-        if (!(v.stream ? StreamFrame(v, s) : BufferFrame(v, s))) break;
+        bool more = v.stream ? StreamFrame(v, s) : BufferFrame(v, region, s);
+        if (!more) break;
         s[kDry] = s[0];
         if (ears) {
             v.itd += itd_step;
@@ -321,12 +389,7 @@ void MixVoice(Voice& v, float* out, float* send, uint32_t frames) {
             s[kLeftEar] = EarAt(v, v.itd);
             s[kRightEar] = EarAt(v, -v.itd);
         }
-        StepGains(v.gain, dg);
-        float* frame = out + i * kOuts;
-        for (uint32_t r = 0; r < kRows; r++) {
-            for (uint32_t o = 0; o < kOuts; o++) frame[o] += s[r] * v.gain.out[r][o];
-            send[i] += s[r] * v.gain.send[r];
-        }
+        MixFrame(lanes, s, out + i * kOuts, send[i]);
         v.pos += step;
     }
     v.gain = g;

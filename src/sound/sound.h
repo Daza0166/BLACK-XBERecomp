@@ -69,9 +69,12 @@ struct Voice {
     float itd = 0;
     float ear[kEarLength] = {};
     uint32_t ear_pos = 0;
-    // ADPCM block cache
+    // ADPCM block cache: the block read last, and the block read before it when this mix block decoded that one
     int64_t block = -1;
-    int16_t decoded[65 * 8];
+    int64_t spare_block = -1;
+    bool block_decoded_now = false;  // this mix block decoded block
+    uint8_t slot = 0;                // decoded[slot] holds block
+    int16_t decoded[2][65 * 8];
 };
 
 // a 3D voice as the library's 3D pass sees it
