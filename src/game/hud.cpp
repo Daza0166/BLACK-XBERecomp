@@ -117,7 +117,7 @@ struct SavedUv {
 // textured quads and solid quads, two corners each
 X86_EXTERN_FUNC(__imp__sub_000D6C00);
 static bool g_film = false;
-// the film quad covers the frame: 4:3 in the middle
+// the film quad covers the frame: made taller about the middle so a 4:3 film fills it, top and bottom cut
 X86_FUNC(sub_000D6C00) {
     uint32_t quads = R32(ctx.esp + 8);
     if (!g_film && g_inset > 0) {
@@ -127,9 +127,10 @@ X86_FUNC(sub_000D6C00) {
     }
     if (!g_film || !game::Wide()) return Emit(ctx, base, quads * 2, __imp__sub_000D6C00);
     float* q = &G<float>(ctx.eax);
-    float saved[4] = {q[0], q[1], q[2], q[3]}, k = game::Narrow(), pad = (q[0] + q[2]) * (1 - k) / 2;
-    q[0] = q[0] * k + pad;
-    q[2] = q[2] * k + pad;
+    float saved[4] = {q[0], q[1], q[2], q[3]};
+    float middle = (q[1] + q[3]) / 2;
+    q[1] = middle + (q[1] - middle) / game::Narrow();
+    q[3] = middle + (q[3] - middle) / game::Narrow();
     __imp__sub_000D6C00(ctx, base);
     std::copy(saved, saved + 4, q);
 }
