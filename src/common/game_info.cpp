@@ -23,6 +23,14 @@ namespace game {
 namespace {
 
 constexpr uint32_t kHostApplyDisplay = WM_APP + 1;  // main.cpp's kApplyDisplay
+constexpr intptr_t kKeyWasDown = 1 << 30;  // WM_KEYDOWN lParam: a held key's repeat
+
+// the panel shows the system arrow, the game's menus their own cursor, play none
+HCURSOR WindowCursor() {
+    if (app::MenuOpen()) return LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
+    if (input::CursorShown()) return static_cast<HCURSOR>(app::CursorImage());
+    return nullptr;
+}
 
 // the panel's keys and the mouse; F3 and the display mode stay with the host
 bool Message(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* result) {
@@ -37,12 +45,12 @@ bool Message(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* resu
             break;
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN:
-            if (!(lp & (1 << 30)) && input::PanelKey(int(wp))) {
+            if (!(lp & kKeyWasDown) && input::PanelKey(int(wp))) {
                 ToggleMenu();
                 *result = 0;
                 return true;
             }
-            if (!(lp & (1 << 30)) && !MenuOpen() && input::HudKey(int(wp))) {
+            if (!(lp & kKeyWasDown) && !MenuOpen() && input::HudKey(int(wp))) {
                 g_hide_hud = !g_hide_hud;
                 *result = 0;
                 return true;
@@ -67,8 +75,7 @@ bool Message(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp, intptr_t* resu
             break;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT) {
-                SetCursor(MenuOpen() ? LoadCursorW(nullptr, MAKEINTRESOURCEW(32512))
-                          : input::CursorShown() ? static_cast<HCURSOR>(CursorImage()) : nullptr);
+                SetCursor(WindowCursor());
                 *result = TRUE;
                 return true;
             }
@@ -148,12 +155,15 @@ const app::GameInfo app::kGame = {
     .missing = L"Put the game in the assets folder: its disc image (.iso), or default.xbe with GlobData.bin and the "
                L"chars, data, export, language, levels, sound and videos folders beside it.",
     .images = {{"default.xbe", "Black"}},
-    .options = {{"skip_intros", &game::Opt().skip_intros, nullptr}, {"fps_counter", &game::Opt().fps_counter, nullptr},
+    .options = {{"skip_intros", &game::Opt().skip_intros, nullptr},
+                {"fps_counter", &game::Opt().fps_counter, nullptr},
                 {"reload_blur", &game::Opt().reload_blur, nullptr},
                 {"fmv_scale", nullptr, &game::Opt().fmv_scale},
                 {"hdr_output", &game::Opt().hdr_output, nullptr},
-                {"invert_mouse", &game::Opt().invert_mouse, nullptr}, {"hold_aim", &game::Opt().hold_aim, nullptr},
-                {"walk_speed", nullptr, &game::Opt().walk_speed}, {"fov", nullptr, &game::Opt().fov},
+                {"invert_mouse", &game::Opt().invert_mouse, nullptr},
+                {"hold_aim", &game::Opt().hold_aim, nullptr},
+                {"walk_speed", nullptr, &game::Opt().walk_speed},
+                {"fov", nullptr, &game::Opt().fov},
                 {"msaa", nullptr, &game::Opt().msaa},
                 {"smaa", &game::Opt().smaa, nullptr},
                 {"pause_on_focus_loss", &game::Opt().pause_on_focus_loss, nullptr},

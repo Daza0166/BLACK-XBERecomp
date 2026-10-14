@@ -198,7 +198,8 @@ bool FindGame(GameFiles& game) {
     };
 
     std::vector<uint8_t> xbe;
-    if (!assets.empty() && ReadHostFile(assets / IMAGE_XBE, xbe) && consider(assets, std::move(xbe), nullptr)) return true;
+    bool extracted = !assets.empty() && ReadHostFile(assets / IMAGE_XBE, xbe);
+    if (extracted && consider(assets, std::move(xbe), nullptr)) return true;
     for (const fs::path& iso : isos) {
         auto disc = std::make_unique<kernel::Disc>();
         std::string error;
@@ -220,7 +221,8 @@ bool FindGame(GameFiles& game) {
     std::wstring text = other_name.filename().wstring() +
                         L" is a different release of the game than this build was made from, and will most likely "
                         L"crash.\n\nStart it anyway?";
-    if (MessageBoxW(nullptr, text.c_str(), kGame.short_title, MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES) return false;
+    int answer = MessageBoxW(nullptr, text.c_str(), kGame.short_title, MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
+    if (answer != IDYES) return false;
     game = std::move(other);
     kernel::MountDisc(std::move(other_disc));
     return true;

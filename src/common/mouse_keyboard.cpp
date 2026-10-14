@@ -30,17 +30,21 @@ namespace input {
 namespace {
 
 HWND g_hwnd = nullptr;
-std::atomic<int> g_dx{0}, g_dy{0};
+std::atomic<int> g_dx{0};
+std::atomic<int> g_dy{0};
 std::atomic<uint64_t> g_take_ms{0};     // TakeMouse, asked every tick in play
 std::atomic<uint64_t> g_capture_ms{0};  // PressedKey
 std::atomic<bool> g_settle{false};
 std::atomic<uint64_t> g_confirm_until{0};
-std::atomic<bool> g_menu{false}, g_keyboard{true};
+std::atomic<bool> g_menu{false};
+std::atomic<bool> g_keyboard{true};
 std::atomic<bool> g_text{false};
 std::mutex g_chars_lock;
 std::u16string g_chars;  // typed, not yet taken
+constexpr size_t kMaxChars = 64;
 std::atomic<int> g_wheel{0};
-constexpr uint64_t kPlayMs = 250, kTapMs = 80;
+constexpr uint64_t kPlayMs = 250;
+constexpr uint64_t kTapMs = 80;
 constexpr uint64_t kCaptureMs = 250;  // PressedKey asked this recently: a key capture is up
 // The wheel binds as two keys, codes Windows leaves unassigned. A notch holds what is bound to it for one tap.
 constexpr int kWheelUp = 0x0E;
@@ -58,7 +62,13 @@ struct Target {
     Action action;
     int button;
 };
-constexpr int kHostKey = -2, kWalk = -3, kStart = 12;
+constexpr int kHostKey = -2;
+constexpr int kWalk = -3;
+constexpr int kFirstButtonBit = 8;
+constexpr int kStart = 12;
+constexpr int kFirstMoveKey = 16;
+constexpr int kFirstLookKey = 20;
+constexpr int kStickMax = 32767;
 // the game's default controller layout
 constexpr Target kActions[] = {
     {{"move_forward", "MOVE FORWARD", "W"}, 16},
@@ -111,7 +121,8 @@ constexpr Name kNames[] = {
     {'A', "A"}, {'B', "B"}, {'C', "C"}, {'D', "D"}, {'E', "E"}, {'F', "F"}, {'G', "G"}, {'H', "H"}, {'I', "I"},
     {'J', "J"}, {'K', "K"}, {'L', "L"}, {'M', "M"}, {'N', "N"}, {'O', "O"}, {'P', "P"}, {'Q', "Q"}, {'R', "R"},
     {'S', "S"}, {'T', "T"}, {'U', "U"}, {'V', "V"}, {'W', "W"}, {'X', "X"}, {'Y', "Y"}, {'Z', "Z"},
-    {'0', "0"}, {'1', "1"}, {'2', "2"}, {'3', "3"}, {'4', "4"}, {'5', "5"}, {'6', "6"}, {'7', "7"}, {'8', "8"}, {'9', "9"},
+    {'0', "0"}, {'1', "1"}, {'2', "2"}, {'3', "3"}, {'4', "4"}, {'5', "5"}, {'6', "6"}, {'7', "7"}, {'8', "8"},
+    {'9', "9"},
     {VK_F1, "F1"}, {VK_F2, "F2"}, {VK_F4, "F4"}, {VK_F5, "F5"}, {VK_F6, "F6"}, {VK_F7, "F7"},
     {VK_F8, "F8"}, {VK_F9, "F9"}, {VK_F10, "F10"}, {VK_F11, "F11"}, {VK_F12, "F12"},
     {VK_NUMPAD0, "Numpad0"}, {VK_NUMPAD1, "Numpad1"}, {VK_NUMPAD2, "Numpad2"}, {VK_NUMPAD3, "Numpad3"},
@@ -142,8 +153,9 @@ constexpr Position kPositions[] = {
     {VK_OEM_COMMA, 0x33}, {VK_OEM_PERIOD, 0x34}, {VK_OEM_2, 0x35},
 };
 
+using Binds = std::array<std::vector<int>, kCount>;
 std::mutex g_bind_lock;
-std::array<std::vector<int>, kCount> g_binds;
+Binds g_binds;
 
 int Vk(const std::string& name) {
     for (const Name& n : kNames)
@@ -236,7 +248,8 @@ bool GameDown(int vk) { return Down(vk) && !(g_menu && vk == VK_DELETE); }
 bool KeyCaptureUp() { return NowMs() - g_capture_ms <= kCaptureMs; }
 
 void Clip() {
-    RECT r, cur;
+    RECT r;
+    RECT cur;
     GetClientRect(g_hwnd, &r);
     MapWindowPoints(g_hwnd, nullptr, reinterpret_cast<POINT*>(&r), 2);
     if (!GetClipCursor(&cur) || !EqualRect(&r, &cur)) ClipCursor(&r);
@@ -259,20 +272,73 @@ void SetKeyboard(bool on) {
     if (g_keyboard.exchange(on) != on) RefreshCursor();
 }
 
+// keys held from before the game had the input wait for release; true once none is held
+bool UpdateSettle(const Binds& binds) {
+    if (!g_settle) return true;
+    for (auto& b : binds)
+        for (int vk : b)
+            if (Down(vk)) return false;
+    for (int vk : kFixed)
+        if (Down(vk)) return false;
+    g_settle = false;
+    return true;
+}
+
+// the bound keys held this tick, beside the pad buttons they pressed
+struct Held {
+    bool used = false;
+    bool walk = false;
+    int stick[8] = {};  // move forward back left right, look up down left right
+};
+
+Held PressActions(const Binds& binds, bool play, Pad& p) {
+    Held held;
+    // in a menu the wheel scrolls, it presses its binds in play only
+    auto pressed = [play](int vk) { return GameDown(vk) && (play || !Wheel(vk)); };
+    static bool pause_held;
+    static bool pause_backs;
+    bool pause = false;
+    for (size_t i = 0; i < kCount; i++) {
+        int b = kActions[i].button;
+        if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), pressed)) continue;
+        held.used = true;
+        if (g_text && b != kStart) continue;
+        if (b == kWalk) {
+            held.walk = true;
+        } else if (b >= kFirstLookKey && !play) {
+            continue;
+        } else if (b >= kFirstMoveKey) {
+            held.stick[b - kFirstMoveKey] = 1;
+        } else if (b < kFirstButtonBit) {
+            p.analog[b] = 0xFF;
+        } else if (b == kStart) {
+            // pressed in a menu it backs out of it, and does nothing more once the menu has gone
+            if (!pause_held) pause_backs = g_menu;
+            pause = true;
+            if (!pause_backs) p.buttons |= uint16_t(1u << (b - kFirstButtonBit));
+            else if (g_menu) p.analog[1] = 0xFF;
+        } else {
+            p.buttons |= uint16_t(1u << (b - kFirstButtonBit));
+        }
+    }
+    pause_held = pause;
+    return held;
+}
+
 }  // namespace
 
 void StartMouse(void* hwnd) {
     g_hwnd = static_cast<HWND>(hwnd);
-    RAWINPUTDEVICE mouse{1, 2, 0, g_hwnd};
+    RAWINPUTDEVICE mouse{1, 2, 0, g_hwnd};  // generic desktop page, mouse usage
     RegisterRawInputDevices(&mouse, 1, sizeof(mouse));
 }
 
 void OnRawInput(void* handle) {
     RAWINPUT ri;
     UINT size = sizeof(ri);
-    if (GetRawInputData(static_cast<HRAWINPUT>(handle), RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER)) == UINT(-1) ||
-        ri.header.dwType != RIM_TYPEMOUSE)
-        return;
+    HRAWINPUT input = static_cast<HRAWINPUT>(handle);
+    if (GetRawInputData(input, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER)) == UINT(-1)) return;
+    if (ri.header.dwType != RIM_TYPEMOUSE) return;
     const RAWMOUSE& m = ri.data.mouse;
     int notch = 0;
     if (m.usButtonFlags & RI_MOUSE_WHEEL) notch = SHORT(m.usButtonData) > 0 ? 1 : -1;
@@ -301,7 +367,8 @@ void ReleaseCursor() {
 bool TakeMouse(float& dx, float& dy) {
     uint64_t now = NowMs();
     bool stale = now - g_take_ms.exchange(now) >= kPlayMs;
-    int x = g_dx.exchange(0), y = g_dy.exchange(0);
+    int x = g_dx.exchange(0);
+    int y = g_dy.exchange(0);
     if ((!x && !y) || stale || !Active()) return false;
     const game::Options& o = game::Opt();
     dx = float(x) * o.mouse_sensitivity;
@@ -314,62 +381,40 @@ void Keyboard(Pad& p) {
         g_settle = true;
         return;
     }
-    std::array<std::vector<int>, kCount> binds;
+    Binds binds;
     {
         std::lock_guard lock(g_bind_lock);
         binds = g_binds;
     }
-    if (g_settle) {
-        for (auto& b : binds)
-            for (int vk : b)
-                if (Down(vk)) return;
-        for (int vk : kFixed)
-            if (Down(vk)) return;
-        g_settle = false;
-    }
-    bool play = Play(), walk = false, used = std::any_of(std::begin(kFixed), std::end(kFixed), Down);
-    int stick[8] = {};  // move forward back left right, look up down left right
-    // in a menu the wheel scrolls, it presses its binds in play only
-    auto pressed = [play](int vk) { return GameDown(vk) && (play || !Wheel(vk)); };
-    static bool pause_held, pause_backs;
-    bool pause = false;
-    for (size_t i = 0; i < kCount; i++) {
-        int b = kActions[i].button;
-        if (b == kHostKey || !std::any_of(binds[i].begin(), binds[i].end(), pressed)) continue;
-        used = true;
-        if (g_text && b != kStart) continue;
-        if (b == kWalk) walk = true;
-        else if (b >= 20 && !play) continue;
-        else if (b >= 16) stick[b - 16] = 1;
-        else if (b < 8) p.analog[b] = 0xFF;
-        else if (b == kStart) {
-            // pressed in a menu it backs out of it, and does nothing more once the menu has gone
-            if (!pause_held) pause_backs = g_menu;
-            pause = true;
-            if (!pause_backs) p.buttons |= uint16_t(1u << (b - 8));
-            else if (g_menu) p.analog[1] = 0xFF;
-        } else p.buttons |= uint16_t(1u << (b - 8));
-    }
-    pause_held = pause;
+    if (!UpdateSettle(binds)) return;
+    bool play = Play();
+    bool fixed_down = std::any_of(std::begin(kFixed), std::end(kFixed), Down);
+    Held held = PressActions(binds, play, p);
     // Enter, Space and Backspace act in menus only; in play they do what they are bound to, in a name they type
     bool confirm = !play && !g_text && (Down(VK_RETURN) || Down(VK_SPACE));
     if (confirm || NowMs() < g_confirm_until) p.analog[0] = 0xFF;
     if ((!play && !g_text && Down(VK_BACK)) || (g_menu && Down(VK_RBUTTON))) p.analog[1] = 0xFF;
-    if (!play)
+    // the arrows, kFixed's first four, are the dpad's bits
+    if (!play) {
         for (int i = 0; i < 4; i++) p.buttons |= uint16_t(Down(kFixed[i]) << i);
-    float speed = walk ? float(game::Opt().walk_speed) / 100.0f : 1.0f;
-    if (int x = stick[3] - stick[2]) p.lx = int16_t(float(x) * speed * 32767.0f);
-    if (int y = stick[0] - stick[1]) p.ly = int16_t(float(y) * speed * 32767.0f);
-    if (int x = stick[7] - stick[6]) p.rx = int16_t(x * 32767);
-    if (int y = stick[4] - stick[5]) p.ry = int16_t(y * 32767);
-    if (used) SetKeyboard(true);
+    }
+    const int* stick = held.stick;
+    float speed = held.walk ? float(game::Opt().walk_speed) / 100.0f : 1.0f;
+    if (int x = stick[3] - stick[2]) p.lx = int16_t(float(x) * speed * float(kStickMax));
+    if (int y = stick[0] - stick[1]) p.ly = int16_t(float(y) * speed * float(kStickMax));
+    if (int x = stick[7] - stick[6]) p.rx = int16_t(x * kStickMax);
+    if (int y = stick[4] - stick[5]) p.ry = int16_t(y * kStickMax);
+    if (fixed_down || held.used) SetKeyboard(true);
 }
 
 void SeenPad(const Pad& p) {
-    auto pushed = [](int16_t v) { return v > 16000 || v < -16000; };
-    if (p.buttons || std::any_of(std::begin(p.analog), std::end(p.analog), [](uint8_t a) { return a > 0x20; }) ||
-        pushed(p.lx) || pushed(p.ly) || pushed(p.rx) || pushed(p.ry))
-        SetKeyboard(false);
+    constexpr int16_t kStickPushed = 16000;
+    constexpr uint8_t kAnalogPushed = 0x20;
+    auto pushed = [](int16_t v) { return v > kStickPushed || v < -kStickPushed; };
+    auto pressed = [](uint8_t a) { return a > kAnalogPushed; };
+    bool analog = std::any_of(std::begin(p.analog), std::end(p.analog), pressed);
+    bool sticks = pushed(p.lx) || pushed(p.ly) || pushed(p.rx) || pushed(p.ry);
+    if (p.buttons || analog || sticks) SetKeyboard(false);
 }
 
 void SetMenu(bool menu) {
@@ -382,12 +427,15 @@ bool CursorShown() { return g_menu && g_keyboard; }
 bool Cursor(float& x, float& y, bool& down) {
     POINT p;
     RECT r;
-    if (!Active() || !CursorShown() || !GetCursorPos(&p) || !ScreenToClient(g_hwnd, &p) || !GetClientRect(g_hwnd, &r) ||
-        r.right <= 0 || r.bottom <= 0)
-        return false;
+    if (!Active() || !CursorShown()) return false;
+    if (!GetCursorPos(&p) || !ScreenToClient(g_hwnd, &p) || !GetClientRect(g_hwnd, &r)) return false;
+    if (r.right <= 0 || r.bottom <= 0) return false;
     // the frame is shown in the middle of the window
-    float aspect = game::Aspect(), w = float(r.right), h = float(r.bottom);
-    float vw = std::min(w, h * aspect), vh = vw / aspect;
+    float aspect = game::Aspect();
+    float w = float(r.right);
+    float h = float(r.bottom);
+    float vw = std::min(w, h * aspect);
+    float vh = vw / aspect;
     x = (float(p.x) - (w - vw) / 2) / vw;
     y = (float(p.y) - (h - vh) / 2) / vh;
     down = Down(VK_LBUTTON);
@@ -409,7 +457,7 @@ void SetTextEntry(bool on) {
 void OnChar(unsigned c) {
     if (!g_text || !Active() || c > 0xFFFF) return;
     std::lock_guard lock(g_chars_lock);
-    if (g_chars.size() < 64) g_chars += char16_t(c);
+    if (g_chars.size() < kMaxChars) g_chars += char16_t(c);
 }
 
 std::u16string TakeChars() {
