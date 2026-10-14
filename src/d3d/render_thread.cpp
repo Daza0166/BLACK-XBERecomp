@@ -91,6 +91,19 @@ bool Same(const uint8_t* a, const uint8_t* b, size_t n) {
     return i == n || !std::memcmp(a + i, b + i, n - i);
 }
 
+constexpr size_t kPiece = 64;  // bytes compared and sent at once
+
+// equal 64 byte pieces, the scan over the state on every draw
+bool SamePiece(const uint8_t* a, const uint8_t* b) {
+    __m128i diff = _mm_setzero_si128();
+    for (size_t i = 0; i < kPiece; i += 16) {
+        __m128i x = _mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i));
+        __m128i y = _mm_loadu_si128(reinterpret_cast<const __m128i*>(b + i));
+        diff = _mm_or_si128(diff, _mm_xor_si128(x, y));
+    }
+    return _mm_testz_si128(diff, diff);
+}
+
 using Clock = std::chrono::steady_clock;
 uint64_t Ns(Clock::time_point t) { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t).count()); }
 
@@ -306,14 +319,23 @@ private:
         std::memcpy(cur_->bytes.data() + at + 8, value, n);
     }
 
+    // the pieces of a range that changed, the last one shorter when the range ends inside it
+    void SendRange(const uint8_t* now, const Range& r) {
+        const uint8_t* sent = reinterpret_cast<const uint8_t*>(&sent_);
+        size_t off = r.off;
+        size_t end = r.off + r.len;
+        for (; off + kPiece <= end; off += kPiece) {
+            if (!SamePiece(sent + off, now + off)) Delta(sent + off, now + off, kPiece);
+        }
+        if (off < end) Delta(sent + off, now + off, end - off);
+    }
+
     // what changed since the last command, in 64 byte pieces
     void SendState(const State& s) {
         const uint8_t* now = reinterpret_cast<const uint8_t*>(&s);
         Cmd c{Op::State};
         size_t first = cur_->bytes.size();
-        for (const Range& r : ranges_)
-            for (size_t off = r.off, end = r.off + r.len; off < end; off += 64)
-                Delta(reinterpret_cast<const uint8_t*>(&sent_) + off, now + off, std::min<size_t>(64, end - off));
+        for (const Range& r : ranges_) SendRange(now, r);
         std::array<uint32_t, 4> textures;
         for (size_t i = 0; i < 4; i++) textures[i] = Header(s.textures[i]);
         Delta(&sent_.textures, &textures, sizeof(textures));
