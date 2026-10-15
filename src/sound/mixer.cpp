@@ -182,11 +182,18 @@ uint32_t RowOf(const Place& at, const Voice& v, uint32_t c, uint32_t bin) {
     return kDry;
 }
 
-// the speaker a bin plays on: bins 0 to 5 are the speakers, the crosstalk bins join the front and back pairs
+// Black pans its in-game sounds over bins 19 to 24, the six speakers again in speaker order (its music lists 0 1 4 5
+// 2 3 where they list 19 20 23 24 21 22), which its DSP image passes on to the speakers
+constexpr uint32_t kSpeakerCopy = 19;
+bool SpeakerCopy(uint32_t bin) { return bin >= kSpeakerCopy && bin < kSpeakerCopy + 6; }
+
+// the speaker a bin plays on: bins 0 to 5 and their copy are the speakers, the crosstalk bins join the front and
+// back pairs
 static_assert(audio::Centre == 2 && audio::Sub == 3 && audio::BackRight == 5);
 void PlaceBin(uint32_t bin, float x, float g[kOuts]) {
     static const audio::Speaker kCrosstalk[4] = {audio::FrontLeft, audio::FrontRight, audio::BackLeft,
                                                  audio::BackRight};
+    if (SpeakerCopy(bin)) bin -= kSpeakerCopy;
     uint32_t to = bin < kCrosstalkFrontLeft ? bin : kCrosstalk[bin - kCrosstalkFrontLeft];
     g[to] = std::max(g[to], x);
 }
@@ -203,7 +210,11 @@ Gains Levels(const Voice& v, const Place& at) {
     uint32_t step = v.channels == 1 ? 1 : 2;
     bool speakers = false;
     // muted speaker bins do not count: such a voice is heard through its effect send
-    for (uint32_t s = 0; s < n; s++) speakers |= bin[s] < 10 && bin[s] != 3 && v.bin_mb[bin[s]] > -10000;
+    for (uint32_t s = 0; s < n; s++) {
+        uint32_t b = bin[s];
+        bool speaker = (b < 10 && b != 3) || (SpeakerCopy(b) && b != kSpeakerCopy + 3);
+        speakers |= speaker && v.bin_mb[b] > -10000;
+    }
     Gains g;
     for (uint32_t c = 0; c < v.channels && c < 2; c++) {
         for (uint32_t s = c; s < per && s < n; s += step) {
@@ -214,7 +225,7 @@ Gains Levels(const Voice& v, const Place& at) {
                 g.send[r] += std::ldexp(x, -g_bin_headroom[b]);
                 continue;
             }
-            if (speakers && b > 9) continue;  // other effect sends
+            if (speakers && b > 9 && !SpeakerCopy(b)) continue;  // other effect sends
             float* row = g.out[r];
             if (speakers) {
                 PlaceBin(b, x, row);
