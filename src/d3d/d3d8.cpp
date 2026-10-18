@@ -249,8 +249,10 @@ float ZScale(const gpu::Surface& zs) {
 }
 
 float g_view_scale = 1.0f;
+float g_near_depth = 0.0f;
 
-// c-38 and c-37 hold the viewport scale and offset, as D3D_GetViewportOffsetAndScale computes them
+// c-38 and c-37 hold the viewport scale and offset, as D3D_GetViewportOffsetAndScale computes them.
+// The scale's unused w carries NearDepth's plane to the host shaders
 constexpr uint32_t kViewportScale = 58;
 constexpr uint32_t kViewportOffset = 59;
 
@@ -259,7 +261,8 @@ void UpdateViewportConstants() {
     g_state.zscale = ZScale(g_state.zs);
     float hw = v.w * 0.5f;
     float hh = v.h * 0.5f;
-    g_state.vsc[kViewportScale] = {hw * g_view_scale, -hh * g_view_scale, (v.max_z - v.min_z) * g_state.zscale, 0};
+    g_state.vsc[kViewportScale] = {hw * g_view_scale, -hh * g_view_scale, (v.max_z - v.min_z) * g_state.zscale,
+                                     g_near_depth};
     float x = v.x + g_state.ss_offset_x + hw;
     float y = v.y + g_state.ss_offset_y + hh;
     g_state.vsc[kViewportOffset] = {x, y, v.min_z * g_state.zscale, 0};
@@ -289,6 +292,13 @@ std::recursive_mutex& Lock() { return g_lock; }
 void ViewScale(float xy) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     g_view_scale = xy;
+    UpdateViewportConstants();
+}
+
+// draws keep what lies nearer than the plane at this view depth (0 off), in order, in front of what lies past it
+void NearDepth(float plane) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    g_near_depth = plane;
     UpdateViewportConstants();
 }
 

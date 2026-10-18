@@ -735,6 +735,7 @@ struct PsoKey {
     uint32_t cull;
     uint32_t ccw;
     uint32_t fill;
+    uint32_t unclipped;  // no clipping at the near and far planes: NearDepthHlsl draws
     int32_t zbias;
     float zslope;
     uint32_t rtfmt;
@@ -782,6 +783,7 @@ struct DrawShaders {
     uint64_t vh = 0;
     uint64_t pkey = 0;
     uint64_t ph = 0;
+    bool near_depth = false;  // the pixel shader writes the depth: NearDepthHlsl
     ID3DBlob* vs_code = nullptr;
     ID3DBlob* ps_code = nullptr;
 };
@@ -2129,7 +2131,7 @@ void D3D12Backend::FillPipelineDesc(const PsoKey& k, ID3DBlob* vs, ID3DBlob* ps,
     d.RasterizerState.FrontCounterClockwise = k.ccw;
     d.RasterizerState.DepthBias = k.zbias;
     d.RasterizerState.SlopeScaledDepthBias = k.zslope;
-    d.RasterizerState.DepthClipEnable = TRUE;
+    d.RasterizerState.DepthClipEnable = !k.unclipped;
     d.RasterizerState.MultisampleEnable = k.msaa != 0;
     FillDepthStencilDesc(k, d.DepthStencilState);
     d.PrimitiveTopologyType = TopologyType(k.topo);
@@ -2513,6 +2515,27 @@ bool D3D12Backend::BindStageTexturesAndTargets(const State& s, DrawTextures& sta
 }
 
 constexpr uint64_t kPixelKeySalt = 0x9E3779B97F4A7C15ull;
+constexpr uint64_t kNearDepthSalt = 0xC2B2AE3D27D4EB4Full;
+
+// c-38, the viewport scale; its w the plane d3d8.cpp NearDepth set, 0 without
+constexpr uint32_t kViewportScaleRow = 58;
+
+bool NearDepth(const State& s) { return s.vsc[kViewportScaleRow][3] > 0; }
+
+// The pixel shader writes the depth. Past the near plane it is the rasterizer's, squeezed behind a small front share
+// of the range; nearer, the parts the plane would clip fill that share linearly in view depth (pos.w), in order
+std::string NearDepthHlsl(std::string src) {
+    const std::string head = "float4 main(VOut i, bool front : SV_IsFrontFace) : SV_Target {\n";
+    const std::string with_depth =
+        "float4 main(VOut i, bool front : SV_IsFrontFace, out float depth : SV_Depth) : SV_Target {\n"
+        "    const float front_share = 1.0 / 4096;\n"
+        "    float plane = c[" + std::to_string(kViewportScaleRow) + "].w;\n"
+        "    float past = front_share + (1 - front_share) * i.pos.z;\n"
+        "    depth = i.pos.w < plane ? front_share * i.pos.w / plane : past;\n";
+    size_t at = src.find(head);
+    if (at != std::string::npos) src.replace(at, head.size(), with_depth);
+    return src;
+}
 
 // sets sh.ph and sh.ps_code, compiling the shader on a cache miss
 void D3D12Backend::EnsurePixelShader(const PixelKey& pk, DrawShaders& sh) {
@@ -2523,7 +2546,9 @@ void D3D12Backend::EnsurePixelShader(const PixelKey& pk, DrawShaders& sh) {
         sh.ps_code = blobs_[sh.ph].Get();
         return;
     }
-    sh.ps_code = Compile(PixelHlsl(pk), "main", "ps_5_0", sh.ph);
+    std::string src = PixelHlsl(pk);
+    if (sh.near_depth) src = NearDepthHlsl(std::move(src));
+    sh.ps_code = Compile(src, "main", "ps_5_0", sh.ph);
     shader_src_[sh.pkey ^ kPixelKeySalt] = sh.ph;
 }
 
@@ -2600,6 +2625,7 @@ void KeyRasterizer(const State& s, const Assembled& a, PsoKey& k) {
     k.cull = cull != 0 && a.topology == Topology::Triangles;
     k.ccw = cull == kCullCw;  // culling clockwise leaves counter clockwise as the front
     k.fill = s.rs[kRsFillMode];
+    k.unclipped = NearDepth(s);
 }
 
 void D3D12Backend::BuildPipelineKey(const State& s, const Assembled& a, uint64_t vh, uint64_t ph, PsoKey& k) {
@@ -3039,7 +3065,8 @@ void D3D12Backend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t 
     DrawTextures stages;
     if (!BindStageTexturesAndTargets(s, stages)) return;
     PixelKey pk = MakePixelKey(s, stages.info);
-    sh.pkey = Hash(&pk, sizeof(pk));
+    sh.near_depth = NearDepth(s);
+    sh.pkey = Hash(&pk, sizeof(pk)) ^ (sh.near_depth ? kNearDepthSalt : 0);
     EnsurePixelShader(pk, sh);
     if (!sh.vs_code || !sh.ps_code) return;
 
