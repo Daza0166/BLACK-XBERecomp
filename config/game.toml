@@ -580,3 +580,8 @@ after = true
 [[hook]]
 at = 0x1BD69F
 call = "StickLook"
+
+# src/game/hooks.cpp, the 0.8 step of the move speed
+[[hook]]
+at = 0x1CC672
+call = "MoveEase"
